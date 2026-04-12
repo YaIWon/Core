@@ -1,0 +1,47 @@
+# ======================================================================
+# SELF-EVOLVING LM CONFIGURATION
+# File: config.toml
+# ======================================================================
+
+# Chat Interface Configuration
+model_path = "checkpoints/model_final.bin"
+device = "cpu"
+max_context_length = 4096
+max_response_tokens = 512
+generation_timeout_secs = 30
+temperature = 0.8
+top_k = 50
+top_p = 0.9
+repetition_penalty = 1.1
+system_prompt = "You are a helpful assistant. Use the provided context to answer questions accurately."
+log_level = "info"
+
+# RAG Configuration
+rag_enabled = true
+rag_top_k = 5
+rag_max_tokens = 1500
+vector_store_path = "data/vectors"
+blockchain_path = "data/blockchain"
+
+# File Watcher Configuration
+[watcher]
+watch_path = "training_data"
+debounce_delay_ms = 500
+recursive = true
+ignore_hidden = true
+ignore_patterns = [".DS_Store", ".git", ".tmp", "~$"]
+
+# Embedding Configuration
+[embedding]
+dimension = 384
+model = "all-MiniLM-L6-v2"
+batch_size = 32
+
+# Blockchain Configuration
+[blockchain]
+difficulty = 4
+storage_path = "data/blockchain"
+bitcoin_anchoring = false
+bitcoin_rpc_url = ""
+bitcoin_rpc_user = ""
+bitcoin_rpc_password = ""

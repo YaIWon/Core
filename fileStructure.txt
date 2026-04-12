@@ -1,0 +1,36 @@
+MINIMAL_ADVANCED_LM/
+│
+├── core/
+│   ├── model/
+│   │   ├── base_model.rs
+│   │   ├── attention.rs
+│   │   ├── feed_forward.rs
+│   │   ├── normalization.rs
+│   │   ├── embedding.rs
+│   │   └── mod.rs
+│   │
+│   ├── tensor/
+│   │   ├── operations.rs
+│   │   └── mod.rs
+│   │
+│   └── mod.rs
+│
+├── training/
+│   ├── train_amoral.rs
+│   ├── data_loader.rs
+│   ├── optimizer.rs
+│   └── mod.rs
+│
+├── inference/
+│   ├── generate.rs
+│   ├── sampling.rs
+│   └── mod.rs
+│
+├── bin/                           # <-- ADD THIS
+│   ├── chat.rs                    # Interactive chat (type messages, get responses)
+│   ├── api_server.rs              # HTTP server (REST API)
+│   └── mod.rs
+│
+├── config.toml
+│
+└── Cargo.toml

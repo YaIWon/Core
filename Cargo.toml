@@ -1,0 +1,80 @@
+[package]
+name = "self_evolving_lm"
+version = "1.0.0"
+edition = "2021"
+
+[[bin]]
+name = "self_evolving_lm"
+path = "src/main.rs"
+
+[[bin]]
+name = "chat"
+path = "src/bin/chat.rs"
+
+[[bin]]
+name = "train_amoral"
+path = "src/bin/train_amoral.rs"
+
+[dependencies]
+# Core
+tokio = { version = "1.35", features = ["full"] }
+anyhow = "1.0"
+thiserror = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+toml = "0.8"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-appender = "0.2"
+async-trait = "0.1"
+
+# File watching & walking
+walkdir = "2.4"
+notify = "6.1"  # Better file watching than polling
+ignore = "0.4"
+
+# File parsing
+pdf-extract = "0.6"
+lopdf = "0.31"
+docx = "0.7"
+zip = "0.6"
+tar = "0.4"
+flate2 = "1.0"
+tesseract = "0.13"  # OCR for images
+image = "0.24"
+regex = "1.10"
+
+# Embeddings & ML
+candle-core = "0.4"
+candle-nn = "0.4"
+candle-transformers = "0.4"
+ndarray = "0.15"
+tokenizers = "0.19"
+
+# Blockchain & crypto
+sha2 = "0.10"
+rand = "0.8"
+uuid = { version = "1.6", features = ["v4", "fast-rng"] }
+
+# Networking & API
+reqwest = { version = "0.11", features = ["json", "stream"] }
+axum = "0.7"
+tower = "0.4"
+tower-http = { version = "0.5", features = ["cors", "trace"] }
+
+# Database (for vector store)
+lmdb = "0.8"
+heed = "0.20"
+
+# Parallel processing
+rayon = "1.8"
+crossbeam = "0.8"
+
+# Async runtime
+futures = "0.3"
+
+# Utilities
+chrono = "0.4"
+dotenv = "0.15"
+once_cell = "1.19"
+lazy_static = "1.4"
