@@ -1,0 +1,29 @@
+{
+  "name": "Self-Evolving LM",
+  "image": "mcr.microsoft.com/devcontainers/rust:1",
+  "features": {
+    "ghcr.io/devcontainers/features/github-cli:1": {},
+    "ghcr.io/devcontainers/features/rust:1": {}
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "rust-lang.rust-analyzer",
+        "tamasfe.even-better-toml",
+        "serayuzgur.crates",
+        "vadimcn.vscode-lldb"
+      ],
+      "settings": {
+        "rust-analyzer.checkOnSave.command": "clippy"
+      }
+    }
+  },
+  "postCreateCommand": "cargo build --release",
+  "forwardPorts": [8080],
+  "portsAttributes": {
+    "8080": {
+      "label": "API Server",
+      "onAutoForward": "notify"
+    }
+  }
+}
