@@ -1,10 +1,12 @@
 // ======================================================================
-// MEMORY MODULE
-// File: src/memory/mod.rs
+// SCANNER MODULE
+// File: src/scanner/mod.rs
 // ======================================================================
 
-pub mod vector_store;
-pub mod blockchain;
+mod watcher;
+mod ingestor;
+mod embedder;
 
-pub use vector_store::VectorStore;
-pub use blockchain::BlockchainManager;
+pub use watcher::{FileWatcher, WatcherConfig, FileEvent, ChangeType, FileProcessor};
+pub use ingestor::Ingestor;
+pub use embedder::Embedder;
