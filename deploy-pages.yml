@@ -1,0 +1,113 @@
+name: Deploy Dashboard to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'dashboard/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    
+    - name: Setup Pages
+      uses: actions/configure-pages@v4
+    
+    - name: Build dashboard
+      run: |
+        mkdir -p dashboard
+        echo '<!DOCTYPE html>
+        <html>
+        <head>
+            <title>Self-Evolving LM Dashboard</title>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <style>
+                body { font-family: system-ui, sans-serif; margin: 0; padding: 20px; background: #0a0a0a; color: #e0e0e0; }
+                .container { max-width: 1200px; margin: 0 auto; }
+                h1 { color: #00ff88; }
+                .card { background: #1a1a1a; border-radius: 8px; padding: 20px; margin: 20px 0; border: 1px solid #333; }
+                .stat { font-size: 2em; font-weight: bold; color: #00ff88; }
+                table { width: 100%; border-collapse: collapse; }
+                th, td { text-align: left; padding: 8px; border-bottom: 1px solid #333; }
+                th { color: #888; }
+                .status { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 8px; }
+                .status.online { background: #00ff88; box-shadow: 0 0 5px #00ff88; }
+                .status.offline { background: #ff4444; }
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <h1>🧠 Self-Evolving LM Dashboard</h1>
+                <div class="card">
+                    <h2>System Status</h2>
+                    <p><span class="status online"></span> Online</p>
+                    <p>Last updated: <span id="timestamp"></span></p>
+                </div>
+                <div class="card">
+                    <h2>Statistics</h2>
+                    <p>Vector Store Entries: <span class="stat" id="vector_count">---</span></p>
+                    <p>Blockchain Height: <span class="stat" id="block_height">---</span></p>
+                    <p>Files Processed: <span class="stat" id="files_processed">---</span></p>
+                </div>
+                <div class="card">
+                    <h2>Recent Learning</h2>
+                    <table id="learning-table">
+                        <thead><tr><th>Time</th><th>Content</th></tr></thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </div>
+            <script>
+                async function fetchData() {
+                    try {
+                        const response = await fetch("data.json");
+                        const data = await response.json();
+                        document.getElementById("timestamp").innerText = new Date().toLocaleString();
+                        document.getElementById("vector_count").innerText = data.vector_count || 0;
+                        document.getElementById("block_height").innerText = data.block_height || 0;
+                        document.getElementById("files_processed").innerText = data.files_processed || 0;
+                        const tbody = document.querySelector("#learning-table tbody");
+                        tbody.innerHTML = "";
+                        if (data.recent_learning) {
+                            data.recent_learning.forEach(item => {
+                                const row = tbody.insertRow();
+                                row.insertCell(0).innerText = item.time;
+                                row.insertCell(1).innerText = item.content;
+                            });
+                        }
+                    } catch(e) { console.error(e); }
+                }
+                fetchData();
+                setInterval(fetchData, 30000);
+            </script>
+        </body>
+        </html>' > dashboard/index.html
+        
+        echo '{}' > dashboard/data.json
+    
+    - name: Upload artifact
+      uses: actions/upload-pages-artifact@v3
+      with:
+        path: 'dashboard'
+    
+    - name: Deploy to GitHub Pages
+      id: deployment
+      uses: actions/deploy-pages@v4
