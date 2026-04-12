@@ -1,0 +1,3 @@
+# This file ensures the training_data directory exists in git
+# Place your training files here (PDF, DOCX, TXT, images, etc.)
+# The system will automatically learn from any file you add.
