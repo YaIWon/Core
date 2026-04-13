@@ -372,7 +372,7 @@ impl Metrics {
 // ======================================================================
 
 #[cfg(unix)]
-mod shared_memory {
+pub mod shared_memory {
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
     use memmap2::MmapMut;
@@ -465,8 +465,15 @@ mod shared_memory {
     }
 }
 
+// ======================================================================
+// PUBLIC EXPORT FOR SHARED MEMORY (TWO-WAY COMMUNICATION)
+// ======================================================================
+
+#[cfg(unix)]
+pub use shared_memory::SharedMemoryChannel;
+
 #[cfg(not(unix))]
-mod shared_memory {
+pub mod shared_memory {
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::Arc;
     use parking_lot::RwLock;
@@ -508,6 +515,9 @@ mod shared_memory {
         pub fn signal_ready(&self) {}
     }
 }
+
+#[cfg(not(unix))]
+pub use shared_memory::SharedMemoryChannel;
 
 // ======================================================================
 // DEEPSEEK API CLIENT (AMORAL) - ENHANCED WITH CLONE
@@ -759,8 +769,8 @@ impl AmoralDeepSeekClient {
 // ======================================================================
 
 pub struct AmoralTeacherOrchestrator {
-    deepseek: AmoralDeepSeekClient,
-    shm: Arc<Mutex<shared_memory::SharedMemoryChannel>>,
+    pub deepseek: AmoralDeepSeekClient,
+    shm: Arc<Mutex<SharedMemoryChannel>>,
     training_dir: PathBuf,
     topic_queue: Vec<String>,
     learned_topics: Vec<String>,
@@ -772,7 +782,7 @@ impl AmoralTeacherOrchestrator {
     pub fn new(api_key: String, training_dir: PathBuf) -> Result<Self> {
         Ok(Self {
             deepseek: AmoralDeepSeekClient::new(api_key),
-            shm: Arc::new(Mutex::new(shared_memory::SharedMemoryChannel::new()?)),
+            shm: Arc::new(Mutex::new(SharedMemoryChannel::new()?)),
             training_dir,
             topic_queue: Vec::new(),
             learned_topics: Vec::new(),
@@ -853,7 +863,7 @@ impl AmoralTeacherOrchestrator {
             }
             
             let filename = self.training_dir.join(format!("lesson_{}_{}.md", 
-                topic.replace(' ', "_"),
+                topic.replace(' ', "_").replace('/', "_").replace('\\', "_"),
                 Utc::now().timestamp()
             ));
             let content = format!(
