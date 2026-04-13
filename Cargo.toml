@@ -3,9 +3,10 @@ name = "self_evolving_lm"
 version = "1.0.0"
 edition = "2021"
 authors = ["Elder Robert William Henley <did.not.think.of.this@gmail.com>"]
-description = "A self-evolving language model with blockchain memory and RAG"
+description = "A self-evolving language model with blockchain memory, RAG, and full system access"
 license = "MIT"
 repository = "https://github.com/YaIWon/Core"
+readme = "README.md"
 
 [lib]
 name = "self_evolving_lm"
@@ -30,6 +31,10 @@ path = "src/bin/teacher.rs"
 [[bin]]
 name = "view_logs"
 path = "src/bin/view_logs.rs"
+
+# ============================================================================
+# DEPENDENCIES
+# ============================================================================
 
 [dependencies]
 # ============ CORE ============
@@ -90,49 +95,107 @@ rayon = "1.8"
 crossbeam = "0.8"
 
 # ============ NETWORKING / API ============
-reqwest = { version = "0.11", features = ["json", "stream"] }
+reqwest = { version = "0.11", features = ["json", "stream", "multipart", "socks", "trust-dns"] }
 axum = "0.7"
 tower = "0.4"
 tower-http = { version = "0.5", features = ["cors", "trace"] }
 hyper = { version = "0.14", features = ["full"] }
 
+# ============ WEBSOCKET ============
+tokio-tungstenite = { version = "0.21", features = ["native-tls"] }
+futures-util = { version = "0.3", features = ["sink"] }
+tungstenite = "0.21"
+
+# ============ SYSTEM INFORMATION ============
+hostname = "0.3"
+whoami = "1.4"
+dirs = "5.0"
+glob = "0.3"
+
+# ============ SERIAL PORT ACCESS ============
+serialport = "4.3"
+
 # ============ SHARED MEMORY (Unix) ============
 [target.'cfg(unix)'.dependencies]
 memmap2 = "0.9"
-nix = { version = "0.27", features = ["fs"] }
+nix = { version = "0.27", features = ["fs", "mman", "fcntl"] }
 parking_lot = "0.12"
+libc = "0.2"
+
+# ============ BLUETOOTH (Linux - Optional) ============
+[target.'cfg(target_os = "linux")'.dependencies]
+bluetooth = { version = "0.2", optional = true }
+bluer = { version = "0.16", optional = true }
 
 # ============ BITCOIN (Optional) ============
 bitcoin = { version = "0.31", features = ["rand"], optional = true }
 bitcoincore-rpc = { version = "0.17", optional = true }
 
 # ============ UTILITIES ============
-glob = "0.3"
 tempfile = "3.8"
-dirs = "5.0"
 which = "5.0"
 signal-hook = "0.3"
 ctrlc = { version = "3.4", features = ["termination"] }
 backtrace = "0.3"
+colored = "2.0"
+
+# ============================================================================
+# DEV DEPENDENCIES
+# ============================================================================
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
 pretty_assertions = "1.4"
 mockall = "0.12"
 proptest = "1.4"
+tempfile = "3.8"
+
+# ============================================================================
+# BUILD PROFILES
+# ============================================================================
 
 [profile.release]
 lto = true
 codegen-units = 1
 opt-level = 3
+strip = true
+panic = "abort"
 
 [profile.dev]
 opt-level = 0
 debug = true
+
+[profile.dev.package."*"]
+opt-level = 2
+
+# ============================================================================
+# FEATURES
+# ============================================================================
 
 [features]
 default = []
 cuda = ["candle-core/cuda"]
 flash-attn = ["candle-core/flash-attn"]
 bitcoin = ["dep:bitcoin", "dep:bitcoincore-rpc"]
-full = ["cuda", "flash-attn", "bitcoin"]
+bluetooth = ["dep:bluetooth", "dep:bluer"]
+full = ["cuda", "flash-attn", "bitcoin", "bluetooth"]
+
+# ============================================================================
+# BENCHMARKS
+# ============================================================================
+
+[[bench]]
+name = "inference"
+harness = false
+
+[[bench]]
+name = "ingestion"
+harness = false
+
+# ============================================================================
+# DOCUMENTATION
+# ============================================================================
+
+[package.metadata.docs.rs]
+features = ["full"]
+rustdoc-args = ["--cfg", "docsrs"]
