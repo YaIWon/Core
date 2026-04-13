@@ -1,14 +1,13 @@
 // ======================================================================
-// TEACHER ORCHESTRATOR BINARY
+// TEACHER ORCHESTRATOR BINARY - With Protocol Integration
 // File: src/bin/teacher.rs
-// Description: Runs the Amoral Teacher with the curriculum
-//              Generates lessons via DeepSeek API
-//              Saves to training_data/ for Marisselle to learn
-//              Listens on shared memory for questions from Marisselle
+// Description: Runs the Amoral Teacher with curriculum and protocol
 // ======================================================================
 
 use anyhow::Result;
 use std::path::PathBuf;
+use std::sync::Arc;
+use tokio::sync::Mutex;
 use tokio::time::{sleep, Duration};
 use tracing::{info, error, warn};
 use tracing_subscriber;
@@ -16,6 +15,12 @@ use tracing_subscriber;
 use self_evolving_lm::learning::{
     AmoralTeacherOrchestrator, 
     Curriculum,
+    ProtocolManager,
+    Message,
+    MessageType,
+    LearningTracker,
+    DebugStatus,
+    ProtocolAction,
 };
 
 #[cfg(unix)]
@@ -24,48 +29,38 @@ use self_evolving_lm::learning::amoral_teacher::SharedMemoryChannel;
 // ======================================================================
 // API KEY CONFIGURATION
 // ======================================================================
-// REPLACE THIS WITH YOUR REAL DEEPSEEK API KEY
-// Get your key from: https://platform.deepseek.com/api_keys
-// Real keys look like: sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 const DEEPSEEK_API_KEY: &str = "sk-26026abba01c45a1958b6b8613be6447";
 // ======================================================================
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Initialize logging
     tracing_subscriber::fmt()
         .with_max_level(tracing::Level::INFO)
         .init();
     
     info!("=========================================");
-    info!("AMORAL TEACHER - DEEPSEEK ORCHESTRATOR");
+    info!("AMORAL TEACHER - WITH COHERENCE PROTOCOL");
     info!("=========================================");
     
-    // USE THE API KEY (from const above OR from environment)
     let api_key = std::env::var("DEEPSEEK_API_KEY")
-        .unwrap_or_else(|_| {
-            warn!("DEEPSEEK_API_KEY not set in environment, using hardcoded key");
-            DEEPSEEK_API_KEY.to_string()
-        });
+        .unwrap_or_else(|_| DEEPSEEK_API_KEY.to_string());
     
-    // Verify key format (real DeepSeek keys start with 'sk-')
-    if !api_key.starts_with("sk-") {
-        warn!("API key does not start with 'sk-'. This may be an invalid key.");
-    }
-    
-    // Load curriculum
     let curriculum = Curriculum::new();
     curriculum.print_summary();
     
-    // Set up training directory
     let training_dir = PathBuf::from("training_data");
     std::fs::create_dir_all(&training_dir)?;
     
-    // Extract all topics in priority order (sorted by priority)
+    let mut teacher = AmoralTeacherOrchestrator::new(api_key, training_dir.clone())?;
+    teacher.start_health_monitor(60).await;
+    
+    // Initialize protocol manager
+    let protocol = Arc::new(Mutex::new(ProtocolManager::new()));
+    
+    // Load topics
     let mut sorted_topics = curriculum.topics.clone();
     sorted_topics.sort_by(|a, b| b.priority.cmp(&a.priority));
     
-    // Flatten topics and sub_topics into a single list
     let mut all_topics: Vec<String> = Vec::new();
     for topic in &sorted_topics {
         all_topics.push(topic.name.clone());
@@ -76,26 +71,18 @@ async fn main() -> Result<()> {
     
     info!("Total topics to teach: {}", all_topics.len());
     
-    // Create teacher orchestrator with API key
-    let mut teacher = AmoralTeacherOrchestrator::new(api_key, training_dir.clone())?;
+    // Track which topics have been taught
+    let taught_topics = Arc::new(Mutex::new(Vec::<String>::new()));
+    let failed_topics = Arc::new(Mutex::new(Vec::<String>::new()));
     
-    // Start health monitor (checks every 60 seconds)
-    teacher.start_health_monitor(60).await;
-    
-    // Add all topics to queue
-    for topic in &all_topics {
-        teacher.add_topic(topic).await;
-    }
-    
-    info!("Starting teaching loop...");
-    info!("Lessons will be saved to: {:?}", training_dir);
-    info!("Marisselle will automatically learn from these files.");
-    info!("=========================================");
-    
-    // Spawn shared memory listener for questions from Marisselle (Unix only)
+    // Spawn shared memory listener with protocol
     #[cfg(unix)]
     let shm_listener = {
         let teacher_deepseek = teacher.get_deepseek_client();
+        let protocol = protocol.clone();
+        let taught = taught_topics.clone();
+        let failed = failed_topics.clone();
+        
         tokio::spawn(async move {
             let mut shm = match SharedMemoryChannel::new() {
                 Ok(s) => s,
@@ -105,39 +92,99 @@ async fn main() -> Result<()> {
                 }
             };
             
-            info!("Shared memory listener started. Waiting for questions from Marisselle...");
+            info!("Protocol-aware shared memory listener started");
             
             loop {
                 if let Some((data, seq)) = shm.read() {
-                    if data.starts_with("QUESTION:") {
-                        let question_text = &data[9..];
-                        info!("Received question from Marisselle (seq {}): {}", seq, question_text);
-                        
-                        let question = question_text.trim();
-                        
-                        // Handle PING specially
-                        if question == "PING" {
-                            let response = "ANSWER: PONG - Teacher is alive and ready.";
-                            let _ = shm.write(response, seq + 1);
-                            shm.signal_ready();
-                            info!("Responded to PING");
-                            continue;
-                        }
-                        
-                        // Ask DeepSeek
-                        match teacher_deepseek.answer_question(question).await {
-                            Ok(answer) => {
-                                let response = format!("ANSWER: {}", answer);
-                                if let Err(e) = shm.write(&response, seq + 1) {
-                                    error!("Failed to write answer to shared memory: {}", e);
+                    // Parse incoming protocol message
+                    if data.starts_with("PROTOCOL:") {
+                        if let Ok(message) = serde_json::from_str::<Message>(&data[9..]) {
+                            info!("Received protocol message: {:?}", message.msg_type);
+                            
+                            // Process through protocol manager
+                            let response = {
+                                let mut pm = protocol.lock().await;
+                                
+                                match pm.process_message(message.clone()) {
+                                    Ok(Some(response_msg)) => Some(response_msg),
+                                    Ok(None) => None,
+                                    Err(e) => {
+                                        error!("Protocol error: {}", e);
+                                        Some(Message::new(
+                                            MessageType::Error(e.to_string()),
+                                            "Teacher",
+                                            &message.conversation_id,
+                                        ))
+                                    }
                                 }
-                                shm.signal_ready();
-                                info!("Answered question from Marisselle");
+                            };
+                            
+                            // Handle the message based on type
+                            match &message.msg_type {
+                                MessageType::Question { id, topic, content, .. } => {
+                                    match teacher_deepseek.answer_question(content).await {
+                                        Ok(answer) => {
+                                            let answer_msg = message.reply_to(
+                                                MessageType::Answer {
+                                                    question_id: id.clone(),
+                                                    content: answer,
+                                                    references: vec![],
+                                                },
+                                                "Teacher",
+                                            );
+                                            let response_data = format!("PROTOCOL:{}", serde_json::to_string(&answer_msg).unwrap());
+                                            let _ = shm.write(&response_data, seq + 1);
+                                            shm.signal_ready();
+                                        }
+                                        Err(e) => {
+                                            error!("Failed to answer: {}", e);
+                                        }
+                                    }
+                                }
+                                MessageType::Confusion { topic, issue, .. } => {
+                                    info!("Marisselle confused about '{}': {}", topic, issue);
+                                    let clarification = teacher_deepseek.explain_concept(topic).await;
+                                    if let Ok(explanation) = clarification {
+                                        let clarify_msg = message.reply_to(
+                                            MessageType::Clarification {
+                                                original_topic: topic.clone(),
+                                                explanation,
+                                            },
+                                            "Teacher",
+                                        );
+                                        let response_data = format!("PROTOCOL:{}", serde_json::to_string(&clarify_msg).unwrap());
+                                        let _ = shm.write(&response_data, seq + 1);
+                                        shm.signal_ready();
+                                        
+                                        // Mark for retry
+                                        failed.lock().await.push(topic.clone());
+                                    }
+                                }
+                                MessageType::LearningConfirmation { topic, understood, confidence, .. } => {
+                                    if *understood && *confidence >= 0.7 {
+                                        info!("✅ Topic '{}' LEARNED (confidence: {:.1}%)", topic, confidence * 100.0);
+                                        taught.lock().await.push(topic.clone());
+                                    } else {
+                                        warn!("❌ Topic '{}' NOT LEARNED (confidence: {:.1}%)", topic, confidence * 100.0);
+                                        failed.lock().await.push(topic.clone());
+                                    }
+                                }
+                                MessageType::DebugDiagnostic { component, status, details } => {
+                                    info!("Debug diagnostic - {}: {} - {}", component, status, details);
+                                }
+                                MessageType::Ping => {
+                                    let pong = message.reply_to(MessageType::Pong, "Teacher");
+                                    let response_data = format!("PROTOCOL:{}", serde_json::to_string(&pong).unwrap());
+                                    let _ = shm.write(&response_data, seq + 1);
+                                    shm.signal_ready();
+                                }
+                                _ => {}
                             }
-                            Err(e) => {
-                                error!("Failed to answer question: {}", e);
-                                let response = "ANSWER: [Error: Unable to answer question at this time]";
-                                let _ = shm.write(response, seq + 1);
+                            
+                            // Send any protocol-generated response
+                            if let Some(response_msg) = response {
+                                let response_data = format!("PROTOCOL:{}", serde_json::to_string(&response_msg).unwrap());
+                                let _ = shm.write(&response_data, seq + 1);
                                 shm.signal_ready();
                             }
                         }
@@ -148,24 +195,146 @@ async fn main() -> Result<()> {
         })
     };
     
-    // Run the teaching loop
-    let result = teacher.run_teaching_loop().await;
+    // Main teaching loop with protocol awareness
+    let mut topic_index = 0;
+    let conversation_id = uuid::Uuid::new_v4().to_string();
     
-    // Print final metrics
-    let metrics = teacher.get_metrics().await;
-    info!("Final metrics: {}", serde_json::to_string_pretty(&metrics).unwrap_or_default());
+    while topic_index < all_topics.len() {
+        // Check protocol action
+        let action = {
+            let pm = protocol.lock().await;
+            pm.get_next_action()
+        };
+        
+        match action {
+            ProtocolAction::ProcessPriority => {
+                info!("Processing priority messages...");
+                // Priority handling would go here
+                sleep(Duration::from_millis(100)).await;
+            }
+            ProtocolAction::DebugMode => {
+                warn!("DEBUG MODE ACTIVE - Running diagnostics");
+                
+                // Get failed topics
+                let failed = failed_topics.lock().await;
+                for topic in failed.iter() {
+                    info!("Debugging failed topic: {}", topic);
+                    
+                    // Try alternative teaching approach
+                    let lesson = teacher.deepseek.teach(topic, "basic").await?;
+                    
+                    // Send debug diagnostic
+                    let diag_msg = Message::new(
+                        MessageType::DebugDiagnostic {
+                            component: "Teacher".to_string(),
+                            status: "Retrying with basic difficulty".to_string(),
+                            details: format!("Topic: {}", topic),
+                        },
+                        "Teacher",
+                        &conversation_id,
+                    );
+                    
+                    let response_data = format!("PROTOCOL:{}", serde_json::to_string(&diag_msg).unwrap());
+                    // Send via shared memory...
+                    
+                    info!("Debug retry for '{}' with basic difficulty", topic);
+                }
+                
+                // Reset debug mode after handling
+                {
+                    let mut pm = protocol.lock().await;
+                    pm.debug_mode.resolve("Completed diagnostic retry cycle");
+                }
+                
+                sleep(Duration::from_secs(5)).await;
+            }
+            ProtocolAction::TeachTopics(unlearned) => {
+                info!("Teaching {} unlearned topics", unlearned.len());
+                
+                for topic in unlearned.iter().take(5) {
+                    // Check if we've tried this too many times
+                    let attempts = {
+                        let pm = protocol.lock().await;
+                        pm.tracker.get_record(topic).map(|r| r.attempts).unwrap_or(0)
+                    };
+                    
+                    let difficulty = if attempts >= 2 { "basic" } else { "intermediate" };
+                    
+                    info!("Teaching '{}' at {} level (attempt {})", topic, difficulty, attempts + 1);
+                    
+                    match teacher.deepseek.teach(topic, difficulty).await {
+                        Ok(lesson) => {
+                            // Create protocol lesson message
+                            let lesson_msg = Message::new(
+                                MessageType::Lesson {
+                                    topic: topic.clone(),
+                                    content: lesson.clone(),
+                                    difficulty: difficulty.to_string(),
+                                    sequence: topic_index as u64,
+                                },
+                                "Teacher",
+                                &conversation_id,
+                            );
+                            
+                            // Save to file
+                            let filename = training_dir.join(format!("lesson_{}.md", 
+                                topic.replace(' ', "_").replace('/', "_").replace(':', "_")));
+                            let content = format!(
+                                "# Lesson: {}\n\n**Difficulty:** {}\n**Attempt:** {}\n\n---\n\n{}\n",
+                                topic, difficulty, attempts + 1, lesson
+                            );
+                            tokio::fs::write(&filename, content).await?;
+                            
+                            // Record attempt
+                            {
+                                let mut pm = protocol.lock().await;
+                                pm.tracker.record_lesson_attempt(topic);
+                            }
+                            
+                            info!("Lesson saved for: {}", topic);
+                        }
+                        Err(e) => {
+                            error!("Failed to teach '{}': {}", topic, e);
+                        }
+                    }
+                    
+                    sleep(Duration::from_millis(500)).await;
+                }
+            }
+            ProtocolAction::ExploreNewTopics => {
+                info!("Curriculum complete! Exploring new topics...");
+                
+                // Ask DeepSeek for new topic suggestions
+                let suggestion_prompt = "Suggest 5 advanced technical topics related to blockchain, cryptography, or distributed systems that would be valuable to learn next. Return only the topic names, one per line.";
+                
+                if let Ok(suggestions) = teacher.deepseek.answer_question(suggestion_prompt).await {
+                    info!("New topic suggestions:\n{}", suggestions);
+                    
+                    for line in suggestions.lines().take(5) {
+                        let topic = line.trim();
+                        if !topic.is_empty() && !topic.starts_with("Suggest") {
+                            all_topics.push(topic.to_string());
+                            info!("Added new topic: {}", topic);
+                        }
+                    }
+                }
+                
+                sleep(Duration::from_secs(10)).await;
+            }
+            ProtocolAction::Idle => {
+                sleep(Duration::from_secs(1)).await;
+            }
+        }
+        
+        topic_index += 1;
+    }
     
-    // Print learned topics
-    let learned = teacher.get_learned_topics().await;
-    info!("Successfully taught {} topics", learned.len());
+    info!("Teaching loop complete!");
     
-    // Shutdown
     teacher.shutdown().await;
     
     #[cfg(unix)]
     shm_listener.abort();
     
-    info!("Teacher orchestrator completed.");
-    
-    result
+    Ok(())
 }
