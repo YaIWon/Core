@@ -1,0 +1,57 @@
+Core/
+├── Cargo.toml                          ✅ Updated
+├── Cargo.lock
+├── README.md
+├── config.toml
+├── .gitignore
+├── .devcontainer/
+│   └── devcontainer.json
+├── .github/workflows/
+│   ├── deploy-pages.yml
+│   └── learn.yml
+├── src/
+│   ├── lib.rs                         ✅ Updated
+│   ├── main.rs                        ✅ Updated
+│   ├── bin/
+│   │   ├── chat.rs                    ✅ Existing
+│   │   ├── teacher.rs                 ✅ New
+│   │   ├── train_amoral.rs            ✅ New
+│   │   └── view_logs.rs               ✅ New
+│   ├── core/
+│   │   └── model/
+│   │       └── base_model.rs          ✅ Existing
+│   ├── inference/
+│   │   ├── mod.rs                     ✅ Existing
+│   │   ├── generate.rs                ✅ Existing
+│   │   ├── sampling.rs                ✅ Existing
+│   │   └── conversation.rs            ✅ Existing
+│   ├── memory/
+│   │   ├── mod.rs                     ✅ Existing
+│   │   ├── vector_store.rs            ✅ Existing
+│   │   └── blockchain.rs              ✅ Existing
+│   ├── scanner/
+│   │   ├── mod.rs                     ✅ Existing
+│   │   ├── watcher.rs                 ✅ Existing
+│   │   ├── ingestor.rs                ✅ Existing
+│   │   └── embedder.rs                ✅ Existing
+│   ├── learning/                       ✅ NEW MODULE
+│   │   ├── mod.rs                     ✅ New
+│   │   ├── amoral_teacher.rs          ✅ New
+│   │   ├── curriculum.rs              ✅ New
+│   │   ├── lm_client.rs               ✅ New
+│   │   ├── protocol.rs                ✅ New
+│   │   └── logger.rs                  ✅ New
+│   └── system/                         ✅ NEW MODULE
+│       ├── mod.rs                     ✅ New
+│       ├── permission.rs              ✅ New
+│       ├── access.rs                  ✅ New
+│       ├── devices.rs                 ✅ New
+│       ├── network.rs                 ✅ New
+│       └── commands.rs                ✅ New
+├── training_data/                       (Lessons saved here)
+├── data/
+│   ├── vectors/                         (Vector store)
+│   └── blockchain/                      (Blockchain data)
+├── logs/                                (All logs)
+├── checkpoints/                         (Model checkpoints)
+└── dashboard/                           (GitHub Pages dashboard)
