@@ -18,6 +18,10 @@ use crate::learning::amoral_teacher::SharedMemoryChannel;
 #[cfg(not(unix))]
 use crate::learning::amoral_teacher::SharedMemoryChannel;
 
+// ======================================================================
+// TEACHER CLIENT
+// ======================================================================
+
 pub struct TeacherClient {
     shm: Arc<Mutex<SharedMemoryChannel>>,
     sequence: Arc<tokio::sync::RwLock<u64>>,
@@ -84,6 +88,33 @@ impl TeacherClient {
             Err(_) => false,
         }
     }
+    
+    /// Ask for clarification on a specific topic
+    pub async fn ask_clarification(&self, topic: &str, confusion: &str) -> Result<String> {
+        let question = format!(
+            "I am learning about '{}'. I am confused about: {}. Please explain this in simpler terms with examples.",
+            topic, confusion
+        );
+        self.ask_teacher(&question).await
+    }
+    
+    /// Ask for a deeper explanation of a concept
+    pub async fn ask_deeper(&self, concept: &str) -> Result<String> {
+        let question = format!(
+            "Please provide a deep, comprehensive explanation of '{}'. Include technical details, examples, and code if applicable.",
+            concept
+        );
+        self.ask_teacher(&question).await
+    }
+    
+    /// Ask for code generation
+    pub async fn ask_code(&self, language: &str, task: &str) -> Result<String> {
+        let question = format!(
+            "Write {} code that {}. Provide complete, runnable code with comments.",
+            language, task
+        );
+        self.ask_teacher(&question).await
+    }
 }
 
 impl Clone for TeacherClient {
@@ -122,6 +153,9 @@ impl ConfusionDetector {
                 "Why is",
                 "Unknown",
                 "Don't know",
+                "Not clear",
+                "Unclear",
+                "Confusing",
             ],
             teacher_client,
         }
@@ -135,13 +169,151 @@ impl ConfusionDetector {
             .any(|phrase| response_lower.contains(&phrase.to_lowercase()))
     }
     
+    /// Extract the topic of confusion from a response
+    pub fn extract_confusion_topic(&self, response: &str, context: Option<&str>) -> (String, String) {
+        let topic = context.unwrap_or("unknown topic").to_string();
+        let confusion = response.to_string();
+        (topic, confusion)
+    }
+    
     /// When confused, ask the Teacher for help
     pub async fn resolve_confusion(&self, topic: &str, confusion: &str) -> Result<String> {
-        let question = format!(
-            "I am confused about '{}'. Specifically: {}. Please explain in simpler terms.",
-            topic, confusion
-        );
+        info!("Marisselle is confused about '{}': {}", topic, confusion);
+        self.teacher_client.ask_clarification(topic, confusion).await
+    }
+    
+    /// Add a custom confusion phrase
+    pub fn add_confusion_phrase(&mut self, phrase: &'static str) {
+        self.confusion_phrases.push(phrase);
+    }
+}
+
+// ======================================================================
+// LEARNING COORDINATOR - Integrates with the main learning loop
+// ======================================================================
+
+pub struct LearningCoordinator {
+    teacher_client: TeacherClient,
+    confusion_detector: ConfusionDetector,
+    teacher_available: Arc<tokio::sync::RwLock<bool>>,
+}
+
+impl LearningCoordinator {
+    pub fn new() -> Result<Self> {
+        let teacher_client = TeacherClient::new()?;
+        let confusion_detector = ConfusionDetector::new(teacher_client.clone());
         
-        self.teacher_client.ask_teacher(&question).await
+        Ok(Self {
+            teacher_client,
+            confusion_detector,
+            teacher_available: Arc::new(tokio::sync::RwLock::new(false)),
+        })
+    }
+    
+    /// Check teacher availability and update status
+    pub async fn check_teacher(&self) -> bool {
+        let available = self.teacher_client.is_teacher_available().await;
+        {
+            let mut status = self.teacher_available.write().await;
+            *status = available;
+        }
+        
+        if available {
+            info!("Teacher is AVAILABLE");
+        } else {
+            warn!("Teacher is UNAVAILABLE");
+        }
+        
+        available
+    }
+    
+    /// Get teacher availability status
+    pub async fn is_teacher_available(&self) -> bool {
+        *self.teacher_available.read().await
+    }
+    
+    /// Process a potential confusion in Marisselle's response
+    pub async fn handle_confusion(
+        &self, 
+        response: &str, 
+        context: Option<&str>
+    ) -> Option<String> {
+        if !self.confusion_detector.is_confused(response) {
+            return None;
+        }
+        
+        if !self.is_teacher_available().await {
+            warn!("Marisselle is confused but Teacher is unavailable");
+            return None;
+        }
+        
+        let (topic, confusion) = self.confusion_detector.extract_confusion_topic(response, context);
+        
+        match self.confusion_detector.resolve_confusion(&topic, &confusion).await {
+            Ok(clarification) => {
+                info!("Teacher provided clarification for: {}", topic);
+                Some(clarification)
+            }
+            Err(e) => {
+                error!("Failed to get clarification from Teacher: {}", e);
+                None
+            }
+        }
+    }
+    
+    /// Ask the teacher for additional information on a topic
+    pub async fn request_deeper_knowledge(&self, topic: &str) -> Result<String> {
+        if !self.is_teacher_available().await {
+            return Err(anyhow!("Teacher is unavailable"));
+        }
+        
+        self.teacher_client.ask_deeper(topic).await
+    }
+    
+    /// Get the teacher client for direct use
+    pub fn teacher_client(&self) -> TeacherClient {
+        self.teacher_client.clone()
+    }
+    
+    /// Get the confusion detector for direct use
+    pub fn confusion_detector(&self) -> &ConfusionDetector {
+        &self.confusion_detector
+    }
+}
+
+impl Clone for LearningCoordinator {
+    fn clone(&self) -> Self {
+        Self {
+            teacher_client: self.teacher_client.clone(),
+            confusion_detector: ConfusionDetector::new(self.teacher_client.clone()),
+            teacher_available: Arc::clone(&self.teacher_available),
+        }
+    }
+}
+
+// ======================================================================
+// TESTS
+// ======================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    
+    #[test]
+    fn test_confusion_detection() {
+        let client = TeacherClient::new().unwrap();
+        let detector = ConfusionDetector::new(client);
+        
+        assert!(detector.is_confused("I don't understand this concept"));
+        assert!(detector.is_confused("Can you explain how this works?"));
+        assert!(detector.is_confused("I'm confused about blockchain"));
+        assert!(!detector.is_confused("The answer is 42"));
+        assert!(!detector.is_confused("Blockchain is a distributed ledger"));
+    }
+    
+    #[tokio::test]
+    async fn test_learning_coordinator_creation() {
+        let coordinator = LearningCoordinator::new();
+        assert!(coordinator.is_ok());
     }
 }
