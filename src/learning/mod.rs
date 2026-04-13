@@ -2,12 +2,12 @@
 // LEARNING MODULE
 // File: src/learning/mod.rs
 // Description: Module exports for the learning system
-//              Includes Teacher (DeepSeek), Curriculum, and LM Client
 // ======================================================================
 
 pub mod amoral_teacher;
 pub mod curriculum;
 pub mod lm_client;
+pub mod protocol;  // NEW
 
 // Re-export Teacher components
 pub use amoral_teacher::{
@@ -29,6 +29,20 @@ pub use lm_client::{
     TeacherClient,
     ConfusionDetector,
     LearningCoordinator,
+};
+
+// Re-export Protocol components
+pub use protocol::{
+    Message,
+    MessageType,
+    ProtocolManager,
+    LearningTracker,
+    LearningRecord,
+    CoherenceValidator,
+    CoherenceResult,
+    DebugMode,
+    DebugStatus,
+    ProtocolAction,
 };
 
 // Re-export SharedMemoryChannel for cross-module use
