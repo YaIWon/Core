@@ -2,6 +2,12 @@
 // SELF-EVOLVING LM - LIBRARY
 // File: src/lib.rs
 // Description: Main library exports for the self-evolving language model
+//              Includes all modules: core, inference, memory, scanner,
+//              learning, and system access.
+// ======================================================================
+
+// ======================================================================
+// MODULE DECLARATIONS
 // ======================================================================
 
 pub mod core;
@@ -9,6 +15,7 @@ pub mod inference;
 pub mod memory;
 pub mod scanner;
 pub mod learning;
+pub mod system;
 
 // ======================================================================
 // CORE RE-EXPORTS
@@ -122,9 +129,80 @@ pub use learning::logger::{
     SearchResult,
 };
 
-// Shared Memory
+// ======================================================================
+// SYSTEM RE-EXPORTS
+// ======================================================================
+
+// Permission
+pub use system::permission::{
+    PermissionManager,
+    Permission,
+    PermissionLevel,
+    PermissionRule,
+};
+
+// System Access
+pub use system::access::{
+    SystemAccess,
+    FileMetadata,
+    SystemInfo,
+    ProcessInfo,
+    DiskInfo,
+    CommandResult as SystemCommandResult,
+};
+
+// Device Manager
+pub use system::devices::{
+    DeviceManager,
+    USBDevice,
+    CameraDevice,
+    MicrophoneDevice,
+    BluetoothDevice,
+    SerialDevice,
+    StorageDevice,
+    NetworkInterface,
+};
+
+// Network Access
+pub use system::network::{
+    NetworkAccess,
+    HttpResponse,
+    WebSocketConnection,
+};
+
+// Command Executor
+pub use system::commands::{
+    CommandExecutor,
+    CommandOutput,
+};
+
+// ======================================================================
+// SHARED MEMORY RE-EXPORTS
+// ======================================================================
+
 #[cfg(unix)]
 pub use learning::amoral_teacher::SharedMemoryChannel;
 
 #[cfg(not(unix))]
 pub use learning::amoral_teacher::SharedMemoryChannel;
+
+// ======================================================================
+// PRELUDE - Commonly used types
+// ======================================================================
+
+pub mod prelude {
+    pub use crate::core::model::base_model::{BaseModel, ModelConfig};
+    pub use crate::inference::generate::Generator;
+    pub use crate::memory::vector_store::VectorStore;
+    pub use crate::memory::blockchain::BlockchainManager;
+    pub use crate::learning::{
+        Curriculum, Topic,
+        ProtocolManager, Message, MessageType,
+        ComprehensiveLogger, LogLevel, LogCategory,
+        AmoralTeacherOrchestrator, AmoralDeepSeekClient,
+    };
+    pub use crate::system::{
+        SystemAccess, NetworkAccess, DeviceManager, CommandExecutor,
+        PermissionManager, Permission, PermissionLevel,
+    };
+}
