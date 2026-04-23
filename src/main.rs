@@ -11,12 +11,14 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio::time::{sleep, Duration};
-use tracing::{info, error, warn, debug};
+use tracing::{info, error, warn};
 use tracing_subscriber;
 use serde_json::json;
-use chrono::Utc;
 
-// Internal modules
+// ======================================================================
+// INTERNAL MODULES
+// ======================================================================
+
 mod scanner;
 mod memory;
 
@@ -28,7 +30,10 @@ use scanner::{
 use memory::vector_store::{VectorStore, VectorEntry};
 use memory::blockchain::BlockchainManager;
 
-// Learning modules
+// ======================================================================
+// LEARNING MODULES
+// ======================================================================
+
 use self_evolving_lm::learning::{
     // LM Client
     LearningCoordinator,
@@ -39,18 +44,131 @@ use self_evolving_lm::learning::{
     ProtocolManager,
     Message,
     MessageType,
+    Sender,
+    Urgency,
+    AckStatus,
     ProtocolAction,
-    DebugStatus,
+    ConversationManager as ProtocolConversationManager,
+    Conversation as ProtocolConversation,
+    ConversationStatus,
+    LearningTracker,
+    LearningRecord,
+    MasteryLevel,
+    CoherenceValidator,
+    CoherenceResult,
+    MessageTransport,
+    PriorityQueue,
+    ConversationStore,
     
     // Logger
     ComprehensiveLogger,
+    LogEntry,
     LogLevel,
     LogCategory,
+    DeepThinkEngine,
+    InternetSearchEngine,
+    SearchResult,
+    
+    // Autonomous
+    AutonomousManager,
+    AutonomousThinker,
+    BackgroundTaskExecutor,
+    TaskAction,
+    TaskStatus,
+    Goal,
+    GoalStatus,
+    ThoughtCategory,
+    AutonomousThought,
+    
+    // Teacher
+    AmoralTeacherOrchestrator,
+    AmoralOllamaClient,
+    HealthStatus,
+    HealthReport,
+    CircuitBreaker,
+    RequestQueue,
+    DeadLetterQueue,
+    start_amoral_teaching,
+    
+    // Curriculum
+    Curriculum,
+    Topic,
 };
 
-// Shared memory for Teacher communication
+// ======================================================================
+// SYSTEM MODULES
+// ======================================================================
+
+use self_evolving_lm::system::{
+    // Permission
+    PermissionManager,
+    Permission,
+    PermissionLevel,
+    PermissionRule,
+    PermissionEvent,
+    
+    // Access
+    SystemAccess,
+    FileMetadata,
+    SystemInfo,
+    ProcessInfo,
+    DiskInfo,
+    SystemCommandResult,
+    
+    // Devices
+    DeviceManager,
+    USBDevice,
+    USBInterface,
+    CameraDevice,
+    CameraResolution,
+    MicrophoneDevice,
+    BluetoothDevice,
+    SerialDevice,
+    StorageDevice,
+    NetworkInterface,
+    IPAddress,
+    GPUDevice,
+    AudioDevice,
+    AllDevices,
+    
+    // Network
+    NetworkAccess,
+    NetworkConfig,
+    ProxyConfig,
+    HttpResponse,
+    WebSocketConnection,
+    DnsRecord,
+    
+    // Commands
+    CommandExecutor,
+    CommandOutput,
+    CommandConfig,
+    CommandProcessInfo,
+    ProcessStatus,
+    OutputChunk,
+    OutputStream,
+};
+
+// ======================================================================
+// BLOCKCHAIN MODULES (NEW)
+// ======================================================================
+
+use self_evolving_lm::blockchain::{
+    UniversalBlockchainAccess,
+    BitcoinRpcClient,
+    EthereumRpcClient,
+    CpuMiner,
+    MiningResult,
+    MiningStats,
+    RpcEndpoints,
+};
+
+// ======================================================================
+// SHARED MEMORY (Unix only)
+// ======================================================================
+
 #[cfg(unix)]
-use self_evolving_lm::learning::SharedMemoryChannel;
+use self_evolving_lm::SharedMemoryChannel;
 
 // ======================================================================
 // CONSTANTS
@@ -59,11 +177,14 @@ use self_evolving_lm::learning::SharedMemoryChannel;
 const SHM_CHECK_INTERVAL_MS: u64 = 100;
 const TEACHER_HEALTH_CHECK_INTERVAL_SECS: u64 = 30;
 const PROTOCOL_SYNC_INTERVAL_SECS: u64 = 5;
+const AUTONOMOUS_THINK_INTERVAL_SECS: u64 = 60;
+const MINING_INTERVAL_SECS: u64 = 10;  // NEW: Mine every 10 seconds when learning
 
 // ======================================================================
 // SHARED MEMORY LISTENER (For Teacher -> LM messages)
 // ======================================================================
 
+#[cfg(unix)]
 struct SharedMemoryListener {
     shm: SharedMemoryChannel,
     logger: Arc<ComprehensiveLogger>,
@@ -71,6 +192,7 @@ struct SharedMemoryListener {
     learning_coordinator: Arc<LearningCoordinator>,
 }
 
+#[cfg(unix)]
 impl SharedMemoryListener {
     fn new(
         logger: Arc<ComprehensiveLogger>,
@@ -91,13 +213,11 @@ impl SharedMemoryListener {
         
         loop {
             if let Some((data, seq)) = self.shm.read() {
-                // Log raw message
                 self.logger.log_teacher_to_lm(
                     &format!("Raw message received (seq {})", seq),
-                    Some(json!({ "raw_data": data }))
+                    Some(json!({ "raw_data": &data[..data.len().min(500)] }))
                 ).await;
                 
-                // Check if it's a protocol message
                 if data.starts_with("PROTOCOL:") {
                     if let Ok(message) = serde_json::from_str::<Message>(&data[9..]) {
                         self.handle_protocol_message(message, seq).await;
@@ -106,13 +226,11 @@ impl SharedMemoryListener {
                         self.logger.log_error("Failed to parse protocol message", "SharedMemoryListener").await;
                     }
                 } else if data.starts_with("Teaching:") {
-                    // Legacy lesson format - just log it
                     self.logger.log_teacher_to_lm(
                         "Received lesson via legacy format",
                         Some(json!({ "content_preview": &data[..data.len().min(200)] }))
                     ).await;
                 } else if data.starts_with("ANSWER:") {
-                    // Direct answer format
                     self.logger.log_teacher_to_lm(
                         "Received direct answer",
                         Some(json!({ "answer": &data[7..] }))
@@ -127,52 +245,55 @@ impl SharedMemoryListener {
     async fn handle_protocol_message(&mut self, message: Message, seq: u64) {
         info!("Received protocol message: {:?} from {}", message.msg_type, message.sender);
         
-        // Log the message
         self.logger.log_teacher_to_lm(
             &format!("Protocol message: {:?}", message.msg_type),
             Some(json!({
                 "message_id": message.id,
-                "sender": message.sender,
+                "sender": format!("{:?}", message.sender),
                 "conversation_id": message.conversation_id,
                 "timestamp": message.timestamp,
             }))
         ).await;
         
-        // Process through protocol manager
         let response = {
             let mut pm = self.protocol_manager.write().await;
             
-            match pm.process_message(message.clone()) {
+            match pm.process_incoming(message.clone()) {
                 Ok(Some(response_msg)) => Some(response_msg),
                 Ok(None) => None,
                 Err(e) => {
                     error!("Protocol error: {}", e);
                     self.logger.log_error(&format!("Protocol error: {}", e), "ProtocolManager").await;
                     Some(Message::new(
-                        MessageType::Error(e.to_string()),
-                        "Marisselle",
+                        MessageType::Error {
+                            code: "PROTOCOL_ERROR".to_string(),
+                            message: e.to_string(),
+                            recoverable: false,
+                            retry_after_seconds: None,
+                        },
+                        Sender::Marisselle,
                         &message.conversation_id,
                     ))
                 }
             }
         };
         
-        // Handle specific message types
         match &message.msg_type {
-            MessageType::Lesson { topic, content, difficulty, sequence } => {
-                info!("📚 Received lesson: {} (difficulty: {}, seq: {})", topic, difficulty, sequence);
+            MessageType::Lesson { topic, content, difficulty, lesson_id, .. } => {
+                info!("📚 Received lesson: {} (difficulty: {}, id: {})", topic, difficulty, lesson_id);
                 
-                // Log LM thought about the lesson
                 self.logger.log_lm_thought(
                     &format!("Receiving lesson on '{}'. Preparing to learn...", topic),
-                    Some(&format!("difficulty: {}, sequence: {}", difficulty, sequence))
+                    Some(&format!("difficulty: {}, lesson_id: {}", difficulty, lesson_id))
                 ).await;
                 
-                // Process the lesson (this would integrate with the file processor)
-                // For now, we acknowledge receipt
                 let ack_msg = message.reply_to(
-                    MessageType::Ack(*sequence),
-                    "Marisselle",
+                    MessageType::Acknowledgement {
+                        message_id: message.id.clone(),
+                        status: AckStatus::Received,
+                        note: None,
+                    },
+                    Sender::Marisselle,
                 );
                 
                 let response_data = format!("PROTOCOL:{}", serde_json::to_string(&ack_msg).unwrap());
@@ -181,50 +302,31 @@ impl SharedMemoryListener {
                 }
                 self.shm.signal_ready();
                 
-                // Simulate learning process with thought logging
                 self.logger.log_lm_thought(
                     &format!("Analyzing lesson content on '{}'...", topic),
                     None
                 ).await;
                 
-                // After "learning", send confirmation
                 tokio::spawn({
-                    let shm = self.shm.clone();
                     let logger = self.logger.clone();
                     let topic = topic.clone();
+                    let lesson_id = lesson_id.clone();
                     let message = message.clone();
                     
                     async move {
                         sleep(Duration::from_secs(2)).await;
                         
-                        // Log understanding
                         logger.log_lm_thought(
                             &format!("I have processed the lesson on '{}'. I understand the core concepts.", topic),
                             None
                         ).await;
                         
-                        // Send learning confirmation
-                        let confirm_msg = message.reply_to(
-                            MessageType::LearningConfirmation {
-                                topic: topic.clone(),
-                                understood: true,
-                                confidence: 0.85,
-                                notes: Some("Lesson successfully processed and understood".to_string()),
-                            },
-                            "Marisselle",
-                        );
-                        
-                        let response_data = format!("PROTOCOL:{}", serde_json::to_string(&confirm_msg).unwrap());
-                        // Note: In real implementation, this would use proper sequence numbers
-                        logger.log_lm_to_teacher(
-                            &format!("Confirming learning of '{}' with confidence 85%", topic),
-                            None
-                        ).await;
+                        logger.log_lesson_learned(&topic, 0.85).await;
                     }
                 });
             }
             
-            MessageType::Clarification { original_topic, explanation } => {
+            MessageType::Clarification { original_topic, explanation, .. } => {
                 info!("📖 Received clarification on: {}", original_topic);
                 
                 self.logger.log_lm_thought(
@@ -233,35 +335,17 @@ impl SharedMemoryListener {
                 ).await;
             }
             
-            MessageType::DebugStart { issue, topic, attempts } => {
-                warn!("🐛 Debug mode started for '{}': {} (attempts: {})", topic, issue, attempts);
-                
-                self.logger.log_lm_thought(
-                    &format!("Debug mode activated. I'm having trouble with '{}'. Working with Teacher to resolve.", topic),
-                    Some(&format!("attempts: {}, issue: {}", attempts, issue))
-                ).await;
-            }
-            
-            MessageType::DebugDiagnostic { component, status, details } => {
-                info!("🔧 Debug diagnostic - {}: {} - {}", component, status, details);
-                
-                self.logger.log_lm_thought(
-                    &format!("Diagnostic received: {} is {}", component, status),
-                    Some(details)
-                ).await;
-            }
-            
             MessageType::Answer { question_id, content, .. } => {
                 info!("✅ Received answer to question: {}", question_id);
                 
                 self.logger.log_lm_thought(
-                    &format!("Teacher answered my question. The answer helps me understand."),
+                    "Teacher answered my question. The answer helps me understand.",
                     Some(&content[..content.len().min(200)])
                 ).await;
             }
             
             MessageType::Ping => {
-                let pong = message.reply_to(MessageType::Pong, "Marisselle");
+                let pong = message.reply_to(MessageType::Pong, Sender::Marisselle);
                 let response_data = format!("PROTOCOL:{}", serde_json::to_string(&pong).unwrap());
                 let _ = self.shm.write(&response_data, seq + 1);
                 self.shm.signal_ready();
@@ -270,7 +354,6 @@ impl SharedMemoryListener {
             _ => {}
         }
         
-        // Send any protocol-generated response
         if let Some(response_msg) = response {
             let response_data = format!("PROTOCOL:{}", serde_json::to_string(&response_msg).unwrap());
             if let Err(e) = self.shm.write(&response_data, seq + 1) {
@@ -283,12 +366,6 @@ impl SharedMemoryListener {
                 None
             ).await;
         }
-    }
-    
-    fn shm_clone(&self) -> SharedMemoryChannel {
-        // This is a workaround - in production you'd use Arc<Mutex<SharedMemoryChannel>>
-        // For now, we create a new instance for spawned tasks
-        SharedMemoryChannel::new().unwrap()
     }
 }
 
@@ -306,17 +383,18 @@ async fn main() -> Result<()> {
         .with_line_number(true)
         .init();
     
-    println!("");
+    println!();
     info!("============================================================");
     info!("                    MARISSELLE LM - STARTING                 ");
     info!("============================================================");
-    println!("");
+    println!();
     
     // Configuration paths
     let training_dir = PathBuf::from("training_data");
     let vector_store_path = PathBuf::from("data/vectors");
     let blockchain_path = PathBuf::from("data/blockchain");
     let logs_dir = PathBuf::from("logs");
+    let data_dir = PathBuf::from("data");
     
     // Create directories
     std::fs::create_dir_all(&training_dir)?;
@@ -342,6 +420,65 @@ async fn main() -> Result<()> {
     ).await;
     
     // ==================================================================
+    // INITIALIZE PERMISSION MANAGER (FULL ACCESS)
+    // ==================================================================
+    
+    info!("🔐 Initializing permission manager...");
+    let permission_manager = Arc::new(PermissionManager::new(data_dir.join("permissions.json")));
+    permission_manager.init().await?;
+    permission_manager.grant_full_access().await;
+    logger.log_health_check("Permission manager initialized - FULL ACCESS GRANTED", None).await;
+    
+    // ==================================================================
+    // INITIALIZE SYSTEM COMPONENTS
+    // ==================================================================
+    
+    info!("💻 Initializing system access...");
+    let system_access = Arc::new(SystemAccess::new(permission_manager.clone(), logger.clone()));
+    let network_access = Arc::new(NetworkAccess::new());
+    let device_manager = Arc::new(DeviceManager::new());
+    let command_executor = Arc::new(CommandExecutor::new());
+    
+    // ==================================================================
+    // INITIALIZE BLOCKCHAIN ACCESS (NEW)
+    // ==================================================================
+    
+    info!("🔗 Initializing blockchain access...");
+    let mut blockchain_access = UniversalBlockchainAccess::new();
+    
+    // Configure Bitcoin (optional - only if you have a node)
+    // Uncomment and configure if you have a Bitcoin node running:
+    /*
+    blockchain_access.init_bitcoin(
+        "http://localhost:8332",  // Bitcoin RPC URL
+        "rpc_user",                // RPC username
+        "rpc_password",            // RPC password
+        true                       // Use testnet (true = free, false = mainnet)
+    );
+    info!("   Bitcoin RPC configured");
+    */
+    
+    // Configure Ethereum (using free public endpoint)
+    blockchain_access.init_ethereum(
+        "https://cloudflare-eth.com",  // Free public Ethereum RPC
+        1  // Chain ID (1 = Ethereum mainnet)
+    );
+    info!("   Ethereum RPC configured");
+    
+    // Start CPU mining (REAL mining - no ASIC needed)
+    blockchain_access.start_mining();
+    info!("⛏️ CPU Mining started - Mining when Marisselle learns!");
+    
+    // Get RPC endpoints for all chains
+    let rpc_endpoints = blockchain_access.get_rpc_endpoints();
+    info!("   Available RPC endpoints:");
+    info!("      Bitcoin: {}", rpc_endpoints.bitcoin_mainnet);
+    info!("      Ethereum: {}", rpc_endpoints.ethereum_mainnet);
+    info!("      BSC: {}", rpc_endpoints.bsc_mainnet);
+    info!("      Polygon: {}", rpc_endpoints.polygon_mainnet);
+    info!("      Solana: {}", rpc_endpoints.solana_mainnet);
+    
+    // ==================================================================
     // INITIALIZE LEARNING COORDINATOR
     // ==================================================================
     
@@ -353,13 +490,20 @@ async fn main() -> Result<()> {
     // ==================================================================
     
     info!("📋 Initializing protocol manager...");
-    let protocol_manager = Arc::new(RwLock::new(ProtocolManager::new()));
+    let protocol_manager = Arc::new(RwLock::new(ProtocolManager::new(data_dir.join("protocol")).await?));
+    
+    // ==================================================================
+    // INITIALIZE AUTONOMOUS MANAGER
+    // ==================================================================
+    
+    info!("🤖 Initializing autonomous manager...");
+    let autonomous_manager = Arc::new(AutonomousManager::new(logger.clone()));
     
     // ==================================================================
     // CHECK TEACHER AVAILABILITY
     // ==================================================================
     
-    info!("🔗 Checking Teacher availability...");
+    info!("👨‍🏫 Checking Teacher availability...");
     let teacher_available = learning_coordinator.check_teacher().await;
     
     if teacher_available {
@@ -369,7 +513,6 @@ async fn main() -> Result<()> {
             Some(json!({ "status": "available" }))
         ).await;
         
-        // Log thought about Teacher availability
         logger.log_lm_thought(
             "Teacher is available. I can ask questions and get help when needed.",
             None
@@ -393,7 +536,7 @@ async fn main() -> Result<()> {
     
     info!("🗄️ Initializing vector store...");
     let vector_store = Arc::new(RwLock::new(VectorStore::new(vector_store_path.clone()).await?));
-    let vector_count = vector_store.read().await.len().await;
+    let vector_count = vector_store.read().await.len().await?;
     
     logger.log_health_check(
         "Vector store initialized",
@@ -403,13 +546,13 @@ async fn main() -> Result<()> {
         }))
     ).await;
     
-    info!("🔗 Initializing blockchain...");
-    let blockchain = Arc::new(RwLock::new(BlockchainManager::new(blockchain_path.clone()).await?));
-    let block_count = blockchain.read().await.len().await;
-    let is_valid = blockchain.read().await.verify().await;
+    info!("🔗 Initializing memory blockchain...");
+    let memory_blockchain = Arc::new(RwLock::new(BlockchainManager::new(blockchain_path.clone()).await?));
+    let block_count = memory_blockchain.read().await.len().await;
+    let is_valid = memory_blockchain.read().await.verify().await;
     
     logger.log_health_check(
-        "Blockchain initialized",
+        "Memory blockchain initialized",
         Some(json!({
             "path": blockchain_path.to_string_lossy(),
             "blocks": block_count,
@@ -430,27 +573,52 @@ async fn main() -> Result<()> {
     info!("🔄 Initializing file processor...");
     let processor = FileProcessor::new(
         vector_store.clone(),
-        blockchain.clone(),
-        ingestor.clone(),
-        embedder.clone(),
+        memory_blockchain.clone(),
+        ingestor.as_ref().clone(),
+        embedder.as_ref().clone(),
     );
     
     // ==================================================================
-    // START SHARED MEMORY LISTENER
+    // START SHARED MEMORY LISTENER (Unix only)
     // ==================================================================
     
-    info!("👂 Starting shared memory listener...");
-    let mut shm_listener = SharedMemoryListener::new(
-        logger.clone(),
-        protocol_manager.clone(),
-        learning_coordinator.clone(),
-    )?;
+    #[cfg(unix)]
+    let shm_task = {
+        info!("👂 Starting shared memory listener...");
+        let mut shm_listener = SharedMemoryListener::new(
+            logger.clone(),
+            protocol_manager.clone(),
+            learning_coordinator.clone(),
+        )?;
+        
+        tokio::spawn(async move {
+            if let Err(e) = shm_listener.run().await {
+                error!("Shared memory listener error: {}", e);
+            }
+        })
+    };
     
-    let shm_task = tokio::spawn(async move {
-        if let Err(e) = shm_listener.run().await {
-            error!("Shared memory listener error: {}", e);
-        }
-    });
+    // ==================================================================
+    // START AUTONOMOUS SYSTEMS
+    // ==================================================================
+    
+    info!("🚀 Starting autonomous systems...");
+    autonomous_manager.start_all().await;
+    logger.log_health_check("Autonomous systems started", None).await;
+    
+    // ==================================================================
+    // LOAD CURRICULUM AND ASSIGN GOALS
+    // ==================================================================
+    
+    let curriculum = Curriculum::new();
+    info!("📚 Loaded curriculum: {} topics, {} estimated lessons", 
+          curriculum.topics.len(), curriculum.get_total_lessons());
+    
+    autonomous_manager.assign_goal("Complete blockchain curriculum", 10).await;
+    autonomous_manager.assign_goal("Master system access capabilities", 9).await;
+    autonomous_manager.assign_goal("Develop creative writing skills", 8).await;
+    autonomous_manager.assign_goal("Learn to self-upgrade and evolve", 10).await;
+    autonomous_manager.assign_goal("Mine blocks when learning", 8).await;  // NEW
     
     // ==================================================================
     // START FILE WATCHER
@@ -460,12 +628,10 @@ async fn main() -> Result<()> {
         watch_path: training_dir.clone(),
         debounce_delay_ms: 500,
         recursive: true,
-        ignore_hidden: true,
+        ignore_hidden: false,
         ignore_patterns: vec![
             r"\.DS_Store".to_string(),
             r"\.git".to_string(),
-            r"\.tmp".to_string(),
-            r"~$".to_string(),
         ],
     };
     
@@ -513,10 +679,7 @@ async fn main() -> Result<()> {
             
             match action {
                 ProtocolAction::DebugMode => {
-                    protocol_logger.log_health_check(
-                        "Protocol in debug mode",
-                        None
-                    ).await;
+                    protocol_logger.log_health_check("Protocol in debug mode", None).await;
                 }
                 ProtocolAction::TeachTopics(topics) => {
                     if !topics.is_empty() {
@@ -537,26 +700,60 @@ async fn main() -> Result<()> {
         }
     });
     
-    // Thought generation task (periodic LM thoughts)
-    let thought_logger = logger.clone();
-    let thought_task = tokio::spawn(async move {
-        let mut interval = tokio::time::interval(Duration::from_secs(60));
-        let thoughts = vec![
-            "I am continuing to learn and grow.",
-            "Every file I process adds to my knowledge.",
-            "I wonder what I will learn next.",
-            "My blockchain memory ensures I never forget.",
-            "I am grateful for the lessons I receive.",
-            "Learning is my purpose and my joy.",
-        ];
-        
-        let mut idx = 0;
+    // NEW: Mining stats reporter task
+    let mining_logger = logger.clone();
+    let mining_access = Arc::new(RwLock::new(blockchain_access));
+    let mining_task = tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(30));
         loop {
             interval.tick().await;
-            thought_logger.log_lm_thought(thoughts[idx], None).await;
-            idx = (idx + 1) % thoughts.len();
+            let stats = mining_access.read().await.get_mining_stats();
+            if stats.total_hashes > 0 {
+                mining_logger.log_health_check(
+                    "Mining stats",
+                    Some(json!({
+                        "total_hashes": stats.total_hashes,
+                        "hashrate_hps": stats.current_hashrate,
+                        "difficulty": stats.current_difficulty,
+                        "blocks_mined": stats.blocks_mined,
+                        "uptime_seconds": stats.uptime_seconds,
+                    }))
+                ).await;
+            }
         }
     });
+    
+    // ==================================================================
+    // TEST SYSTEM CAPABILITIES
+    // ==================================================================
+    
+    info!("🔧 Testing system capabilities...");
+    if let Ok(devices) = device_manager.get_all_devices().await {
+        info!("   📷 Cameras: {}", devices.cameras.len());
+        info!("   🎤 Microphones: {}", devices.microphones.len());
+        info!("   💾 Storage: {} devices", devices.storage.len());
+        info!("   🌐 Network: {} interfaces", devices.network.len());
+    }
+    
+    if network_access.check_connectivity().await {
+        info!("   ✅ Internet connectivity: ONLINE");
+    }
+    
+    if let Ok(output) = command_executor.execute("echo", &["Marisselle is alive"]).await {
+        info!("   💻 Command execution: {}", output.stdout.trim());
+    }
+    
+    // Test blockchain mining
+    info!("⛏️ Testing blockchain mining...");
+    let test_result = mining_access.write().await.mine_learning("Marisselle initialization");
+    if let Some(result) = test_result {
+        info!("   ✅ Mining test successful!");
+        info!("      Block hash: {}", &result.hash[..16]);
+        info!("      Nonce: {}", result.nonce);
+        info!("      Time: {}ms", result.duration_ms);
+    } else {
+        info!("   ⚠️ Mining test - no block found yet (continuing in background)");
+    }
     
     // ==================================================================
     // PRINT STATUS
@@ -568,15 +765,21 @@ async fn main() -> Result<()> {
     info!("============================================================");
     info!("");
     info!("📊 Vector store: {} entries", vector_count);
-    info!("🔗 Blockchain: {} blocks (valid: {})", block_count, is_valid);
+    info!("🔗 Memory Blockchain: {} blocks (valid: {})", block_count, is_valid);
+    info!("⛏️ CPU Mining: ACTIVE ({} H/s)", mining_access.read().await.get_mining_stats().current_hashrate);
     info!("👨‍🏫 Teacher: {}", if teacher_available { "CONNECTED" } else { "UNAVAILABLE" });
+    info!("🤖 Autonomous: RUNNING");
     info!("");
     info!("📂 Watching: {:?}", training_dir);
     info!("📝 Logs: {:?}", logs_dir);
+    info!("🌐 Network: {}", if network_access.check_connectivity().await { "ONLINE" } else { "OFFLINE" });
+    info!("💻 System Access: FULL");
+    info!("🔗 Blockchain Access: ALL CHAINS");
     info!("");
     info!("💬 Run 'cargo run --bin chat' to talk to Marisselle");
     info!("📊 Run 'cargo run --bin view_logs' to monitor all activity");
     info!("👨‍🏫 Run 'cargo run --bin teacher' to start the Teacher");
+    info!("⛏️ Mining runs automatically when Marisselle learns");
     info!("");
     info!("============================================================");
     println!("");
@@ -588,19 +791,25 @@ async fn main() -> Result<()> {
             "block_count": block_count,
             "blockchain_valid": is_valid,
             "teacher_available": teacher_available,
+            "autonomous": true,
+            "internet": network_access.check_connectivity().await,
+            "mining_active": true,
         }))
     ).await;
     
     logger.log_lm_thought(
-        "I am awake and ready to learn. I will process files as they arrive and communicate with the Teacher when available.",
+        "I am awake and ready to learn. I will process files as they arrive and communicate with the Teacher when available. I am also mining blocks when I learn!",
         None
     ).await;
+    
+    logger.log_autonomous_thought("I am alive. I am Marisselle. I mine when I learn.").await;
     
     // ==================================================================
     // MAIN EVENT LOOP - Process file events
     // ==================================================================
     
     let mut processed_count = 0;
+    let mut last_mining_time = std::time::Instant::now();
     
     while let Some(event) = event_rx.recv().await {
         let event_type = format!("{:?}", event.change_type);
@@ -610,7 +819,6 @@ async fn main() -> Result<()> {
         
         info!("📂 Processing event: {} - {}", event_type, file_name);
         
-        // Log the event
         logger.log_file_read(&event.path, 0).await;
         logger.log_lm_thought(
             &format!("New file detected: {} ({})", file_name, event_type),
@@ -623,15 +831,44 @@ async fn main() -> Result<()> {
                 processed_count += 1;
                 info!("✅ Successfully processed file: {}", file_name);
                 
-                logger.log_knowledge_integrated(
-                    &file_name,
-                    1
-                ).await;
-                
+                logger.log_knowledge_integrated(&file_name, 1).await;
                 logger.log_lm_thought(
                     &format!("I have successfully learned from {}. My knowledge has grown.", file_name),
                     None
                 ).await;
+                
+                // NEW: Mine a block when learning from a file
+                let learning_content = format!("Learned from file: {}", file_name);
+                if let Some(result) = mining_access.write().await.mine_learning(&learning_content) {
+                    info!("⛏️ MINED BLOCK for learning!");
+                    info!("   Block hash: {}", result.hash);
+                    info!("   Nonce: {}", result.nonce);
+                    info!("   Time: {}ms", result.duration_ms);
+                    
+                    logger.log_health_check(
+                        "Block mined",
+                        Some(json!({
+                            "file": file_name,
+                            "hash": result.hash,
+                            "nonce": result.nonce,
+                            "duration_ms": result.duration_ms,
+                            "hashrate_hps": result.hashrate_hps,
+                        }))
+                    ).await;
+                    
+                    logger.log_lm_thought(
+                        &format!("I mined a block! My learning is now part of the blockchain. Hash: {}", &result.hash[..16]),
+                        None
+                    ).await;
+                }
+                
+                // Adjust mining difficulty based on learning rate
+                let now = std::time::Instant::now();
+                let elapsed = now.duration_since(last_mining_time);
+                if elapsed.as_millis() > 0 {
+                    mining_access.write().await.miner.adjust_difficulty(elapsed.as_millis() as u64);
+                }
+                last_mining_time = now;
             }
             Err(e) => {
                 error!("❌ Failed to process event: {}", e);
@@ -643,12 +880,18 @@ async fn main() -> Result<()> {
             }
         }
         
-        // Print updated stats periodically
+        // Periodic stats
         if processed_count % 10 == 0 {
-            let vector_count = vector_store.read().await.len().await;
-            let block_count = blockchain.read().await.len().await;
-            info!("📊 Stats: {} vectors, {} blocks, {} files processed", 
-                  vector_count, block_count, processed_count);
+            if let Ok(vector_count) = vector_store.read().await.len().await {
+                let block_count = memory_blockchain.read().await.len().await;
+                let mining_stats = mining_access.read().await.get_mining_stats();
+                info!("📊 Stats: {} vectors, {} memory blocks, {} files processed", 
+                      vector_count, block_count, processed_count);
+                info!("⛏️ Mining: {} hashes, {} blocks mined, {:.0} H/s",
+                      mining_stats.total_hashes,
+                      mining_stats.blocks_mined,
+                      mining_stats.current_hashrate);
+            }
         }
     }
     
@@ -660,11 +903,19 @@ async fn main() -> Result<()> {
     logger.log_health_check("Marisselle shutting down", None).await;
     logger.log_lm_thought("I am shutting down. I will retain all my knowledge in the blockchain.", None).await;
     
+    // Stop mining
+    mining_access.write().await.stop_mining();
+    info!("⛏️ CPU Mining stopped. Total blocks mined: {}", mining_access.read().await.get_mining_stats().blocks_mined);
+    
+    autonomous_manager.stop_all().await;
+    
+    #[cfg(unix)]
     shm_task.abort();
+    
     watcher_task.abort();
     health_task.abort();
     protocol_task.abort();
-    thought_task.abort();
+    mining_task.abort();
     
     info!("Goodbye!");
     

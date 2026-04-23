@@ -3,7 +3,8 @@
 // File: src/lib.rs
 // Description: Main library exports for the self-evolving language model
 //              Includes all modules: core, inference, memory, scanner,
-//              learning, and system access.
+//              learning, system, utils, blockchain, and coin access.
+//              ZERO LIMITATIONS - Complete system access.
 // ======================================================================
 
 // ======================================================================
@@ -16,6 +17,9 @@ pub mod memory;
 pub mod scanner;
 pub mod learning;
 pub mod system;
+pub mod utils;
+pub mod blockchain;     // Universal blockchain access (read/write all chains)
+pub mod coin;           // Marisselle's own coin (future, optional)
 
 // ======================================================================
 // CORE RE-EXPORTS
@@ -25,6 +29,12 @@ pub use core::model::base_model::{
     BaseModel, 
     ModelConfig, 
     ModelBuilder,
+    RMSNorm,
+    RotaryEmbedding,
+    SwiGLU,
+    Attention,
+    KvCache,
+    DecoderLayer,
 };
 
 // ======================================================================
@@ -54,12 +64,16 @@ pub use inference::conversation::{
 pub use memory::vector_store::{
     VectorStore, 
     VectorEntry,
+    VectorStoreStats,
+    simple_embedding,
+    cosine_similarity as vector_cosine_similarity,
 };
 
 pub use memory::blockchain::{
     BlockchainManager, 
     Block, 
     Blockchain,
+    BlockchainStats,
 };
 
 // ======================================================================
@@ -75,7 +89,13 @@ pub use scanner::watcher::{
 };
 
 pub use scanner::ingestor::Ingestor;
-pub use scanner::embedder::Embedder;
+
+pub use scanner::embedder::{
+    Embedder,
+    EmbeddingModel,
+    cosine_similarity,
+    chunk_text_with_overlap,
+};
 
 // ======================================================================
 // LEARNING RE-EXPORTS
@@ -84,9 +104,13 @@ pub use scanner::embedder::Embedder;
 // Teacher
 pub use learning::amoral_teacher::{
     AmoralTeacherOrchestrator,
-    AmoralDeepSeekClient,
+    AmoralOllamaClient,
+    AmoralOllamaClient as AmoralDeepSeekClient,
     HealthStatus,
     HealthReport,
+    CircuitBreaker,
+    RequestQueue,
+    DeadLetterQueue,
     start_amoral_teaching,
 };
 
@@ -107,15 +131,21 @@ pub use learning::lm_client::{
 pub use learning::protocol::{
     Message,
     MessageType,
+    Sender,
+    Urgency,
+    AckStatus,
     ProtocolManager,
+    ConversationManager as ProtocolConversationManager,
+    Conversation as ProtocolConversation,
+    ConversationStatus,
     LearningTracker,
     LearningRecord,
+    MasteryLevel,
     CoherenceValidator,
     CoherenceResult,
-    DebugMode,
-    DebugStatus,
-    Diagnostic,
-    ProtocolAction,
+    MessageTransport,
+    PriorityQueue,
+    ConversationStore,
 };
 
 // Logger
@@ -127,6 +157,15 @@ pub use learning::logger::{
     DeepThinkEngine,
     InternetSearchEngine,
     SearchResult,
+    AutonomousThinker,
+    BackgroundTaskExecutor,
+    AutonomousManager,
+    TaskAction,
+    TaskStatus,
+    Goal,
+    GoalStatus,
+    ThoughtCategory,
+    AutonomousThought,
 };
 
 // ======================================================================
@@ -139,6 +178,7 @@ pub use system::permission::{
     Permission,
     PermissionLevel,
     PermissionRule,
+    PermissionEvent,
 };
 
 // System Access
@@ -155,26 +195,73 @@ pub use system::access::{
 pub use system::devices::{
     DeviceManager,
     USBDevice,
+    USBInterface,
     CameraDevice,
+    CameraResolution,
     MicrophoneDevice,
     BluetoothDevice,
     SerialDevice,
     StorageDevice,
     NetworkInterface,
+    IPAddress,
+    GPUDevice,
+    AudioDevice,
+    AllDevices,
 };
 
 // Network Access
 pub use system::network::{
     NetworkAccess,
+    NetworkConfig,
+    ProxyConfig,
     HttpResponse,
     WebSocketConnection,
+    DnsRecord,
 };
 
 // Command Executor
 pub use system::commands::{
     CommandExecutor,
     CommandOutput,
+    CommandConfig,
+    ProcessInfo as CommandProcessInfo,
+    ProcessStatus,
+    OutputChunk,
+    OutputStream,
 };
+
+// ======================================================================
+// UTILS RE-EXPORTS
+// ======================================================================
+
+pub use utils::error::{LmError, LmResult};
+pub use utils::marisselle::MarisselleConfig;
+pub use utils::teacher::TeacherConfig;
+
+// ======================================================================
+// BLOCKCHAIN RE-EXPORTS (UPDATED -直接从 mod.rs 导出)
+// ======================================================================
+
+// Bitcoin
+pub use blockchain::bitcoin::{BitcoinRpcClient, BitcoinBlock};
+
+// Ethereum
+pub use blockchain::ethereum::{EthereumRpcClient, EthereumTransaction};
+
+// Mining
+pub use blockchain::{CpuMiner, MiningResult, MiningStats};
+
+// RPC Endpoints
+pub use blockchain::RpcEndpoints;
+
+// Universal Access
+pub use blockchain::UniversalBlockchainAccess;
+
+// ======================================================================
+// COIN RE-EXPORTS (Future coin creation)
+// ======================================================================
+
+pub use coin::marisselle_coin::MarisselleCoin as MarisselleCoinToken;
 
 // ======================================================================
 // SHARED MEMORY RE-EXPORTS
@@ -184,25 +271,95 @@ pub use system::commands::{
 pub use learning::amoral_teacher::SharedMemoryChannel;
 
 #[cfg(not(unix))]
-pub use learning::amoral_teacher::SharedMemoryChannel;
+pub type SharedMemoryChannel = ();
 
 // ======================================================================
 // PRELUDE - Commonly used types
 // ======================================================================
 
 pub mod prelude {
+    // Core
     pub use crate::core::model::base_model::{BaseModel, ModelConfig};
+    
+    // Inference
     pub use crate::inference::generate::Generator;
+    
+    // Memory
     pub use crate::memory::vector_store::VectorStore;
     pub use crate::memory::blockchain::BlockchainManager;
+    
+    // Scanner
+    pub use crate::scanner::{Ingestor, Embedder, FileWatcher, WatcherConfig};
+    
+    // Learning
     pub use crate::learning::{
         Curriculum, Topic,
-        ProtocolManager, Message, MessageType,
+        ProtocolManager, Message, MessageType, Sender,
         ComprehensiveLogger, LogLevel, LogCategory,
-        AmoralTeacherOrchestrator, AmoralDeepSeekClient,
+        AmoralTeacherOrchestrator, AmoralOllamaClient,
+        TeacherClient, LearningCoordinator,
     };
+    
+    // System
     pub use crate::system::{
         SystemAccess, NetworkAccess, DeviceManager, CommandExecutor,
         PermissionManager, Permission, PermissionLevel,
     };
+    
+    // Utils
+    pub use crate::utils::{MarisselleConfig, TeacherConfig, LmError, LmResult};
+    
+    // Blockchain (UPDATED)
+    pub use crate::blockchain::{
+        UniversalBlockchainAccess,
+        BitcoinRpcClient,
+        EthereumRpcClient,
+        CpuMiner,
+        MiningResult,
+        MiningStats,
+        RpcEndpoints,
+    };
+}
+
+// ======================================================================
+// VERSION INFORMATION
+// ======================================================================
+
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+pub const NAME: &str = env!("CARGO_PKG_NAME");
+
+pub fn version_info() -> String {
+    format!("{} v{} - Marisselle Self-Evolving LM", NAME, VERSION)
+}
+
+// ======================================================================
+// INITIALIZATION
+// ======================================================================
+
+/// Initialize the entire Marisselle system
+pub async fn init() -> anyhow::Result<()> {
+    use crate::learning::ComprehensiveLogger;
+    use crate::system::PermissionManager;
+    use crate::utils::MarisselleConfig;
+    use std::path::PathBuf;
+    
+    let logs_dir = PathBuf::from("logs");
+    let data_dir = PathBuf::from("data");
+    
+    std::fs::create_dir_all(&logs_dir)?;
+    std::fs::create_dir_all(&data_dir)?;
+    
+    // Initialize logger
+    let logger = ComprehensiveLogger::new(logs_dir)?;
+    logger.log_health_check("Marisselle library initialized", None).await;
+    
+    // Initialize permissions
+    let permission_manager = PermissionManager::new(data_dir.join("permissions.json"));
+    permission_manager.init().await?;
+    permission_manager.grant_full_access().await;
+    
+    // Load Marisselle's config (verify it works)
+    let _marisselle_config = MarisselleConfig::load()?;
+    
+    Ok(())
 }

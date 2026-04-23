@@ -3,7 +3,7 @@ name = "self_evolving_lm"
 version = "1.0.0"
 edition = "2021"
 authors = ["Elder Robert William Henley <did.not.think.of.this@gmail.com>"]
-description = "A self-evolving language model with blockchain memory, RAG, and full system access"
+description = "Marisselle - Self-Evolving Language Model with full system access"
 license = "MIT"
 repository = "https://github.com/YaIWon/Core"
 readme = "README.md"
@@ -32,10 +32,6 @@ path = "src/bin/teacher.rs"
 name = "view_logs"
 path = "src/bin/view_logs.rs"
 
-# ============================================================================
-# DEPENDENCIES
-# ============================================================================
-
 [dependencies]
 # ============ CORE ============
 tokio = { version = "1.35", features = ["full"] }
@@ -45,66 +41,74 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 toml = "0.8"
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-tracing-appender = "0.2"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json", "fmt"] }
 async-trait = "0.1"
 futures = "0.3"
-chrono = { version = "0.4", features = ["serde"] }
+chrono = { version = "0.4", features = ["serde", "clock"] }
 once_cell = "1.19"
-lazy_static = "1.4"
 dotenv = "0.15"
-uuid = { version = "1.6", features = ["v4", "fast-rng", "serde"] }
+uuid = { version = "1.6", features = ["v4", "serde", "fast-rng"] }
+colored = "2.0"
 
-# ============ MACHINE LEARNING / TRANSFORMERS ============
-candle-core = { version = "0.4", features = ["cuda"] }
-candle-nn = "0.4"
+# ============ LOCAL LLM (MARISSELLE'S BRAIN) ============
+candle-core = { version = "=0.4.1", default-features = false }
+candle-nn = "=0.4.1"
 candle-transformers = "0.4"
-tokenizers = "0.19"
-ndarray = "0.15"
+half = "=2.4.1"
+rand = "=0.8.5"
+rand_distr = "=0.4.3"
+tokenizers = { version = "0.19", features = ["http"] }
+ndarray = { version = "0.15", features = ["rayon", "serde"] }
 
 # ============ FILE WATCHING ============
 walkdir = "2.4"
-notify = "6.1"
+notify = { version = "6.1", features = ["macos_fsevent", "macos_kqueue"] }
 ignore = "0.4"
 
 # ============ FILE PARSING ============
 pdf-extract = "0.6"
 lopdf = "0.31"
-docx = "0.7"
-zip = "0.6"
+docx-rs = "0.4"
+zip = { version = "1.1", features = ["deflate", "bzip2", "zstd", "aes", "lzma"] }
 tar = "0.4"
-flate2 = "1.0"
-tesseract = "0.13"
-image = "0.24"
+flate2 = { version = "1.0", features = ["zlib", "rust_backend"] }
+tesseract = "0.15"
+image = { version = "0.24", features = ["png", "jpeg", "gif", "bmp", "tiff", "webp", "ico", "pnm"] }
 regex = "1.10"
 
 # ============ DATABASE / STORAGE ============
 heed = "0.20"
-lmdb = "0.8"
 sled = "0.34"
 
 # ============ CRYPTO / BLOCKCHAIN ============
 sha2 = "0.10"
-rand = "0.8"
-rand_chacha = "0.3"
+sha3 = "0.10"                    # NEW: For Ethereum Keccak256 hashing
 hex = "0.4"
-base64 = "0.21"
+base64 = { version = "0.21", features = ["std", "alloc"] }
+bitcoin = { version = "0.30", features = ["rand", "secp-recovery", "serde"] }  # NEW: Bitcoin transaction building
+secp256k1 = { version = "0.27", features = ["rand", "serde"] }  # NEW: ECDSA signing for BTC/ETH
 
 # ============ PARALLEL PROCESSING ============
 rayon = "1.8"
 crossbeam = "0.8"
 
 # ============ NETWORKING / API ============
-reqwest = { version = "0.11", features = ["json", "stream", "multipart", "socks", "trust-dns"] }
-axum = "0.7"
-tower = "0.4"
-tower-http = { version = "0.5", features = ["cors", "trace"] }
-hyper = { version = "0.14", features = ["full"] }
+reqwest = { version = "0.11", features = [
+    "json",
+    "stream",
+    "multipart",
+    "socks",
+    "gzip",
+    "brotli",
+    "native-tls",
+    "rustls-tls",
+    "cookies",
+] }
+url = { version = "2.5", features = ["serde"] }
 
 # ============ WEBSOCKET ============
-tokio-tungstenite = { version = "0.21", features = ["native-tls"] }
-futures-util = { version = "0.3", features = ["sink"] }
-tungstenite = "0.21"
+tokio-tungstenite = { version = "0.20", features = ["native-tls"] }
+futures-util = { version = "0.3", features = ["sink", "std"] }
 
 # ============ SYSTEM INFORMATION ============
 hostname = "0.3"
@@ -112,24 +116,31 @@ whoami = "1.4"
 dirs = "5.0"
 glob = "0.3"
 
-# ============ SERIAL PORT ACCESS ============
+# ============ SERIAL PORT ============
 serialport = "4.3"
+
+# ============ BLUETOOTH (Linux) ============
+[target.'cfg(target_os = "linux")'.dependencies]
+bluer = "0.16"
 
 # ============ SHARED MEMORY (Unix) ============
 [target.'cfg(unix)'.dependencies]
 memmap2 = "0.9"
-nix = { version = "0.27", features = ["fs", "mman", "fcntl"] }
+nix = { version = "0.27", features = [
+    "fs",
+    "mman",
+    "signal",
+    "process",
+    "mount",
+    "user",
+    "net",
+    "poll",
+    "term",
+    "time",
+    "uio",
+] }
 parking_lot = "0.12"
 libc = "0.2"
-
-# ============ BLUETOOTH (Linux - Optional) ============
-[target.'cfg(target_os = "linux")'.dependencies]
-bluetooth = { version = "0.2", optional = true }
-bluer = { version = "0.16", optional = true }
-
-# ============ BITCOIN (Optional) ============
-bitcoin = { version = "0.31", features = ["rand"], optional = true }
-bitcoincore-rpc = { version = "0.17", optional = true }
 
 # ============ UTILITIES ============
 tempfile = "3.8"
@@ -137,65 +148,13 @@ which = "5.0"
 signal-hook = "0.3"
 ctrlc = { version = "3.4", features = ["termination"] }
 backtrace = "0.3"
-colored = "2.0"
-
-# ============================================================================
-# DEV DEPENDENCIES
-# ============================================================================
-
-[dev-dependencies]
-criterion = { version = "0.5", features = ["html_reports"] }
-pretty_assertions = "1.4"
-mockall = "0.12"
-proptest = "1.4"
-tempfile = "3.8"
-
-# ============================================================================
-# BUILD PROFILES
-# ============================================================================
+num_cpus = "1.16"
 
 [profile.release]
 lto = true
 codegen-units = 1
 opt-level = 3
-strip = true
-panic = "abort"
 
 [profile.dev]
 opt-level = 0
 debug = true
-
-[profile.dev.package."*"]
-opt-level = 2
-
-# ============================================================================
-# FEATURES
-# ============================================================================
-
-[features]
-default = []
-cuda = ["candle-core/cuda"]
-flash-attn = ["candle-core/flash-attn"]
-bitcoin = ["dep:bitcoin", "dep:bitcoincore-rpc"]
-bluetooth = ["dep:bluetooth", "dep:bluer"]
-full = ["cuda", "flash-attn", "bitcoin", "bluetooth"]
-
-# ============================================================================
-# BENCHMARKS
-# ============================================================================
-
-[[bench]]
-name = "inference"
-harness = false
-
-[[bench]]
-name = "ingestion"
-harness = false
-
-# ============================================================================
-# DOCUMENTATION
-# ============================================================================
-
-[package.metadata.docs.rs]
-features = ["full"]
-rustdoc-args = ["--cfg", "docsrs"]

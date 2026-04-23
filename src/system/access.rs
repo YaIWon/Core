@@ -15,8 +15,9 @@ use tokio::fs as tokio_fs;
 use tracing::{info, warn, error, debug};
 use walkdir::WalkDir;
 use std::sync::Arc;
+use crate::system::permission::{PermissionManager, Permission, PermissionLevel};
 
-use super::permission::PermissionManager;
+// use super::permission::PermissionManager;
 use crate::learning::ComprehensiveLogger;
 
 pub struct SystemAccess {
@@ -35,19 +36,19 @@ impl SystemAccess {
         }
     }
     
-    // ==================================================================
+      // ==================================================================
     // FILE SYSTEM OPERATIONS
     // ==================================================================
     
     pub async fn read_file(&self, path: &Path) -> Result<Vec<u8>> {
-        if !self.permission_manager.request_file_access(path, "read").await? {
+        if !self.permission_manager.request_file_read(path).await? {
             return Err(anyhow!("Permission denied: read {}", path.display()));
         }
         
         info!("Reading file: {}", path.display());
         self.logger.log_file_read(path, 0).await;
         
-        let content = tokio_fs::read(path).await
+        let content = tokio::fs::read(path).await
             .with_context(|| format!("Failed to read file: {}", path.display()))?;
         
         self.logger.log_file_read(path, content.len() as u64).await;
@@ -61,17 +62,17 @@ impl SystemAccess {
     }
     
     pub async fn write_file(&self, path: &Path, content: &[u8]) -> Result<()> {
-        if !self.permission_manager.request_file_access(path, "write").await? {
+        if !self.permission_manager.request_file_write(path).await? {
             return Err(anyhow!("Permission denied: write {}", path.display()));
         }
         
         info!("Writing file: {} ({} bytes)", path.display(), content.len());
         
         if let Some(parent) = path.parent() {
-            tokio_fs::create_dir_all(parent).await?;
+            tokio::fs::create_dir_all(parent).await?;
         }
         
-        tokio_fs::write(path, content).await
+        tokio::fs::write(path, content).await
             .with_context(|| format!("Failed to write file: {}", path.display()))?;
         
         self.logger.log_file_write(path, content.len() as u64).await;
@@ -83,7 +84,7 @@ impl SystemAccess {
     }
     
     pub async fn append_file(&self, path: &Path, content: &[u8]) -> Result<()> {
-        if !self.permission_manager.request_file_access(path, "write").await? {
+        if !self.permission_manager.request_file_write(path).await? {
             return Err(anyhow!("Permission denied: append {}", path.display()));
         }
         
@@ -98,34 +99,37 @@ impl SystemAccess {
     }
     
     pub async fn delete_file(&self, path: &Path) -> Result<()> {
-        if !self.permission_manager.request_file_access(path, "delete").await? {
+        if !self.permission_manager.request_file_delete(path).await? {
             return Err(anyhow!("Permission denied: delete {}", path.display()));
         }
         
         info!("Deleting file: {}", path.display());
-        tokio_fs::remove_file(path).await
+        tokio::fs::remove_file(path).await
             .with_context(|| format!("Failed to delete file: {}", path.display()))?;
         Ok(())
     }
     
     pub async fn delete_directory(&self, path: &Path) -> Result<()> {
-        if !self.permission_manager.request_file_access(path, "delete").await? {
+        if !self.permission_manager.request_file_delete(path).await? {
             return Err(anyhow!("Permission denied: delete directory {}", path.display()));
         }
         
         info!("Deleting directory: {}", path.display());
-        tokio_fs::remove_dir_all(path).await
+        tokio::fs::remove_dir_all(path).await
             .with_context(|| format!("Failed to delete directory: {}", path.display()))?;
         Ok(())
     }
     
     pub async fn list_directory(&self, path: &Path) -> Result<Vec<PathBuf>> {
-        if !self.permission_manager.request_file_access(path, "list").await? {
+        if !self.permission_manager.check_permission(
+            &Permission::ListDirectory(path.to_path_buf()), 
+            &format!("List directory: {}", path.display())
+        ).await? {
             return Err(anyhow!("Permission denied: list {}", path.display()));
         }
         
         let mut entries = Vec::new();
-        let mut read_dir = tokio_fs::read_dir(path).await?;
+        let mut read_dir = tokio::fs::read_dir(path).await?;
         
         while let Some(entry) = read_dir.next_entry().await? {
             entries.push(entry.path());
@@ -135,6 +139,13 @@ impl SystemAccess {
     }
     
     pub async fn list_directory_recursive(&self, path: &Path) -> Result<Vec<PathBuf>> {
+        if !self.permission_manager.check_permission(
+            &Permission::ListDirectory(path.to_path_buf()), 
+            &format!("List directory recursive: {}", path.display())
+        ).await? {
+            return Err(anyhow!("Permission denied: list {}", path.display()));
+        }
+        
         let mut entries = Vec::new();
         for entry in WalkDir::new(path).follow_links(true) {
             let entry = entry?;
@@ -144,35 +155,53 @@ impl SystemAccess {
     }
     
     pub async fn create_directory(&self, path: &Path) -> Result<()> {
-        tokio_fs::create_dir_all(path).await?;
+        if !self.permission_manager.check_permission(
+            &Permission::CreateDirectory(path.to_path_buf()), 
+            &format!("Create directory: {}", path.display())
+        ).await? {
+            return Err(anyhow!("Permission denied: create directory {}", path.display()));
+        }
+        
+        tokio::fs::create_dir_all(path).await?;
         Ok(())
     }
     
     pub async fn copy_file(&self, from: &Path, to: &Path) -> Result<()> {
-        if !self.permission_manager.request_file_access(from, "read").await? {
+        if !self.permission_manager.request_file_read(from).await? {
             return Err(anyhow!("Permission denied: read {}", from.display()));
         }
-        if !self.permission_manager.request_file_access(to, "write").await? {
+        if !self.permission_manager.request_file_write(to).await? {
             return Err(anyhow!("Permission denied: write {}", to.display()));
         }
         
         info!("Copying {} to {}", from.display(), to.display());
-        tokio_fs::copy(from, to).await?;
+        tokio::fs::copy(from, to).await?;
         Ok(())
     }
     
     pub async fn move_file(&self, from: &Path, to: &Path) -> Result<()> {
+        if !self.permission_manager.request_file_read(from).await? {
+            return Err(anyhow!("Permission denied: read {}", from.display()));
+        }
+        if !self.permission_manager.request_file_write(to).await? {
+            return Err(anyhow!("Permission denied: write {}", to.display()));
+        }
+        
         info!("Moving {} to {}", from.display(), to.display());
-        tokio_fs::rename(from, to).await?;
+        tokio::fs::rename(from, to).await?;
         Ok(())
     }
     
     pub async fn file_exists(&self, path: &Path) -> bool {
-        tokio_fs::try_exists(path).await.unwrap_or(false)
+        tokio::fs::try_exists(path).await.unwrap_or(false)
     }
     
     pub async fn get_file_metadata(&self, path: &Path) -> Result<FileMetadata> {
-        let metadata = tokio_fs::metadata(path).await?;
+        if !self.permission_manager.request_file_read(path).await? {
+            return Err(anyhow!("Permission denied: read {}", path.display()));
+        }
+        
+        let metadata = tokio::fs::metadata(path).await?;
         
         Ok(FileMetadata {
             size: metadata.len(),

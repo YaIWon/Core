@@ -1,9 +1,8 @@
 // ======================================================================
-// CHAT INTERFACE - PRODUCTION READY WITH RAG
+// CHAT INTERFACE - PRODUCTION READY WITH RAG AND MINING
 // File: src/bin/chat.rs
 // Description: Interactive chat with RAG (Retrieval-Augmented Generation)
-//              Integrates with vector store for context retrieval
-//              Includes conversation memory, graceful shutdown, full logging
+//              Now with blockchain mining for proof-of-conversation
 // ======================================================================
 
 use anyhow::{Result, Context};
@@ -16,15 +15,15 @@ use std::time::{Duration, Instant};
 use tokio::signal;
 use tokio::sync::RwLock;
 use tokio::time::timeout;
-use tracing::{info, warn, error, debug, Level};
+use tracing::{info, warn, error, Level};
 use tracing_subscriber;
 
-// Internal modules
 use self_evolving_lm::core::model::base_model::BaseModel;
 use self_evolving_lm::inference::generate::Generator;
 use self_evolving_lm::inference::sampling::SamplingConfig;
 use self_evolving_lm::memory::vector_store::VectorStore;
 use self_evolving_lm::memory::blockchain::BlockchainManager;
+use self_evolving_lm::blockchain::{UniversalBlockchainAccess, MiningResult, MiningStats};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatConfig {
@@ -33,10 +32,10 @@ pub struct ChatConfig {
     pub max_context_length: usize,
     pub max_response_tokens: usize,
     pub generation_timeout_secs: u64,
-    pub temperature: f64,
-    pub top_k: usize,
-    pub top_p: f64,
-    pub repetition_penalty: f64,
+    pub temperature: f32,
+    pub top_k: Option<usize>,
+    pub top_p: Option<f32>,
+    pub repetition_penalty: f32,
     pub system_prompt: String,
     pub log_level: String,
     pub rag_enabled: bool,
@@ -44,6 +43,10 @@ pub struct ChatConfig {
     pub rag_max_tokens: usize,
     pub vector_store_path: PathBuf,
     pub blockchain_path: PathBuf,
+    // NEW: Mining configuration
+    pub mining_enabled: bool,
+    pub mine_on_chat: bool,
+    pub mine_on_command: bool,
 }
 
 impl Default for ChatConfig {
@@ -55,16 +58,19 @@ impl Default for ChatConfig {
             max_response_tokens: 512,
             generation_timeout_secs: 30,
             temperature: 0.8,
-            top_k: 50,
-            top_p: 0.9,
+            top_k: Some(50),
+            top_p: Some(0.9),
             repetition_penalty: 1.1,
-            system_prompt: "You are a helpful assistant. Use the provided context to answer questions accurately.".to_string(),
+            system_prompt: "You are Marisselle, a self-evolving language model. You are helpful, honest, and knowledgeable.".to_string(),
             log_level: "info".to_string(),
             rag_enabled: true,
             rag_top_k: 5,
             rag_max_tokens: 1500,
             vector_store_path: PathBuf::from("data/vectors"),
             blockchain_path: PathBuf::from("data/blockchain"),
+            mining_enabled: true,
+            mine_on_chat: true,
+            mine_on_command: true,
         }
     }
 }
@@ -137,6 +143,15 @@ impl ConversationManager {
     pub fn clear(&mut self) {
         self.messages.clear();
     }
+    
+    pub fn get_conversation_hash(&self) -> String {
+        use sha2::{Sha256, Digest};
+        let mut hasher = Sha256::new();
+        for msg in &self.messages {
+            hasher.update(format!("{}:{}", msg.role, msg.content));
+        }
+        format!("{:x}", hasher.finalize())
+    }
 }
 
 pub struct ChatApp {
@@ -147,6 +162,8 @@ pub struct ChatApp {
     running: Arc<RwLock<bool>>,
     vector_store: Option<Arc<RwLock<VectorStore>>>,
     blockchain: Option<BlockchainManager>,
+    blockchain_access: Option<Arc<RwLock<UniversalBlockchainAccess>>>,  // NEW
+    total_blocks_mined: u64,  // NEW
 }
 
 impl ChatApp {
@@ -165,10 +182,9 @@ impl ChatApp {
         init_logging(&config);
         
         info!("Starting Chat Application");
-        info!("Config loaded from: {:?}", config_path);
         info!("RAG enabled: {}", config.rag_enabled);
+        info!("Mining enabled: {}", config.mining_enabled);
         
-        // Load model
         let device = match config.device.as_str() {
             "cuda" => candle_core::Device::new_cuda(0)?,
             _ => candle_core::Device::Cpu,
@@ -181,12 +197,16 @@ impl ChatApp {
             top_k: config.top_k,
             top_p: config.top_p,
             repetition_penalty: config.repetition_penalty,
+            frequency_penalty: 0.0,
+            presence_penalty: 0.0,
+            typical_p: None,
+            min_p: None,
+            seed: None,
         };
         let generator = Generator::new(model.clone(), sampling);
         
         let conversation = Arc::new(RwLock::new(ConversationManager::new(config.max_context_length)));
         
-        // Initialize vector store for RAG
         let vector_store = if config.rag_enabled {
             Some(Arc::new(RwLock::new(VectorStore::new(config.vector_store_path.clone()).await?)))
         } else {
@@ -194,6 +214,17 @@ impl ChatApp {
         };
         
         let blockchain = Some(BlockchainManager::new(config.blockchain_path.clone()).await?);
+        
+        // NEW: Initialize blockchain access for mining
+        let blockchain_access = if config.mining_enabled {
+            let mut access = UniversalBlockchainAccess::new();
+            access.init_ethereum("https://cloudflare-eth.com", 1);
+            access.start_mining();
+            info!("⛏️ Blockchain mining initialized");
+            Some(Arc::new(RwLock::new(access)))
+        } else {
+            None
+        };
         
         Ok(Self {
             config,
@@ -203,6 +234,8 @@ impl ChatApp {
             running: Arc::new(RwLock::new(true)),
             vector_store,
             blockchain,
+            blockchain_access,
+            total_blocks_mined: 0,
         })
     }
     
@@ -218,6 +251,22 @@ impl ChatApp {
             let mut running = running.write().await;
             *running = false;
         });
+        
+        // Start mining stats reporter
+        let mining_access = self.blockchain_access.clone();
+        if let Some(access) = mining_access {
+            let stats_logger = tokio::spawn(async move {
+                let mut interval = tokio::time::interval(Duration::from_secs(30));
+                loop {
+                    interval.tick().await;
+                    let stats = access.read().await.get_mining_stats();
+                    if stats.total_hashes > 0 {
+                        info!("⛏️ Mining stats - Hashes: {}, Blocks: {}, Rate: {} H/s", 
+                              stats.total_hashes, stats.blocks_mined, stats.current_hashrate);
+                    }
+                }
+            });
+        }
         
         while *self.running.read().await {
             print!("> ");
@@ -242,14 +291,12 @@ impl ChatApp {
                 continue;
             }
             
-            // Retrieve RAG context
             let rag_context = if self.config.rag_enabled {
                 self.get_rag_context(&sanitized).await
             } else {
                 String::new()
             };
             
-            // Add user message to conversation
             {
                 let mut conv = self.conversation.write().await;
                 conv.add_message("User", &sanitized);
@@ -260,7 +307,7 @@ impl ChatApp {
                 conv.get_formatted(&self.config.system_prompt, &rag_context)
             };
             
-            info!("Generating response for: {}...", &sanitized[..sanitized.len().min(50)]);
+            info!("Generating response...");
             let start = Instant::now();
             
             let generate_future = self.generator.generate_with_prompt(&prompt, self.config.max_response_tokens);
@@ -280,15 +327,28 @@ impl ChatApp {
                     }
                     
                     println!("\n{}\n", response);
+                    
+                    // NEW: Mine a block for this conversation exchange
+                    if self.config.mining_enabled && self.config.mine_on_chat {
+                        self.mine_conversation_block(&sanitized, &response).await;
+                    }
                 }
                 Ok(Err(e)) => {
                     error!("Generation failed: {}", e);
                     println!("\n[Error: Failed to generate response. Please try again.]\n");
                 }
                 Err(_) => {
-                    warn!("Generation timed out after {} seconds", self.config.generation_timeout_secs);
+                    warn!("Generation timed out");
                     println!("\n[Error: Generation timed out. Please try a shorter prompt.]\n");
                 }
+            }
+        }
+        
+        // Print final mining stats
+        if self.config.mining_enabled {
+            if let Some(access) = &self.blockchain_access {
+                let stats = access.read().await.get_mining_stats();
+                println!("\n⛏️ Total blocks mined this session: {}", stats.blocks_mined);
             }
         }
         
@@ -298,12 +358,52 @@ impl ChatApp {
         Ok(())
     }
     
+    // NEW: Mine a block for a conversation exchange
+    async fn mine_conversation_block(&mut self, user_input: &str, assistant_response: &str) {
+        let conv_hash = {
+            let conv = self.conversation.read().await;
+            conv.get_conversation_hash()
+        };
+        
+        let mining_content = format!(
+            "Chat conversation\nUser: {}\nAssistant: {}\nConversation Hash: {}",
+            user_input, assistant_response, conv_hash
+        );
+        
+        if let Some(access) = &self.blockchain_access {
+            let mut bc = access.write().await;
+            if let Some(result) = bc.mine_learning(&mining_content) {
+                self.total_blocks_mined += 1;
+                info!("⛏️ MINED BLOCK for conversation!");
+                info!("   Block hash: {}", &result.hash[..16]);
+                info!("   Nonce: {}", result.nonce);
+                info!("   Time: {}ms", result.duration_ms);
+                
+                // Log to console for user visibility
+                println!("\n💎 Mined block for this conversation!");
+                println!("   Hash: {}...", &result.hash[..16]);
+                println!("   Nonce: {}\n", result.nonce);
+            }
+        }
+    }
+    
     async fn get_rag_context(&self, query: &str) -> String {
         if let Some(store) = &self.vector_store {
-            match store.read().await.get_context_for_query(query, self.config.rag_max_tokens).await {
-                Ok(context) => context,
+            let store_read = store.read().await;
+            let query_embedding = self_evolving_lm::memory::vector_store::simple_embedding(query, 384);
+            match store_read.search_by_similarity(&query_embedding, self.config.rag_top_k).await {
+                Ok(results) => {
+                    let mut context = String::new();
+                    for entry in results.iter().take(self.config.rag_top_k) {
+                        if context.len() + entry.content.len() < self.config.rag_max_tokens {
+                            context.push_str(&entry.content);
+                            context.push_str("\n\n");
+                        }
+                    }
+                    context
+                }
                 Err(e) => {
-                    error!("Failed to get RAG context: {}", e);
+                    error!("RAG search failed: {}", e);
                     String::new()
                 }
             }
@@ -356,6 +456,59 @@ impl ChatApp {
                     println!("\n[Blockchain verification: {}]\n", if valid { "PASSED" } else { "FAILED" });
                 }
             }
+            // NEW: Mining commands
+            "/mine" => {
+                if let Some(access) = &self.blockchain_access {
+                    let stats = access.read().await.get_mining_stats();
+                    println!("\n⛏️ MINING STATS:");
+                    println!("   Total hashes: {}", stats.total_hashes);
+                    println!("   Blocks mined: {}", stats.blocks_mined);
+                    println!("   Hashrate: {} H/s", stats.current_hashrate);
+                    println!("   Difficulty: {}", stats.current_difficulty);
+                    println!("   Uptime: {} seconds\n", stats.uptime_seconds);
+                } else {
+                    println!("\n[Mining is disabled. Enable in config.]\n");
+                }
+            }
+            "/minenow" => {
+                if let Some(access) = &self.blockchain_access {
+                    println!("\n⛏️ Mining a block with current conversation...");
+                    let conv_hash = {
+                        let conv = self.conversation.read().await;
+                        conv.get_conversation_hash()
+                    };
+                    let mining_content = format!("Manual mining command\nConversation Hash: {}", conv_hash);
+                    let mut bc = access.write().await;
+                    if let Some(result) = bc.mine_learning(&mining_content) {
+                        self.total_blocks_mined += 1;
+                        println!("✅ BLOCK MINED!");
+                        println!("   Hash: {}", result.hash);
+                        println!("   Nonce: {}", result.nonce);
+                        println!("   Time: {}ms\n", result.duration_ms);
+                    } else {
+                        println!("   No block found this time. Try again!\n");
+                    }
+                } else {
+                    println!("\n[Mining is disabled. Enable in config.]\n");
+                }
+            }
+            "/mining" => {
+                if let Some(access) = &self.blockchain_access {
+                    let enabled = self.config.mining_enabled;
+                    let mine_on_chat = self.config.mine_on_chat;
+                    println!("\n⛏️ MINING CONFIGURATION:");
+                    println!("   Mining enabled: {}", enabled);
+                    println!("   Mine on chat: {}", mine_on_chat);
+                    println!("   Blocks mined this session: {}", self.total_blocks_mined);
+                    if let Some(access) = &self.blockchain_access {
+                        let stats = access.read().await.get_mining_stats();
+                        println!("   Total blocks ever: {}", stats.blocks_mined);
+                    }
+                    println!();
+                } else {
+                    println!("\n[Mining is disabled. Set mining_enabled = true in config.]\n");
+                }
+            }
             "/exit" | "/quit" => {
                 let mut running = self.running.write().await;
                 *running = false;
@@ -369,11 +522,12 @@ impl ChatApp {
     
     fn print_welcome(&self) {
         println!("\n{}", "=".repeat(60));
-        println!("🤖 SELF-EVOLVING LM - CHAT INTERFACE");
+        println!("🤖 MARISSELLE - CHAT INTERFACE");
         println!("{}", "=".repeat(60));
         println!("Model: {:?}", self.config.model_path.file_name().unwrap_or_default());
         println!("Device: {}", self.config.device);
         println!("RAG: {}", if self.config.rag_enabled { "ENABLED" } else { "DISABLED" });
+        println!("⛏️ Mining: {}", if self.config.mining_enabled { "ENABLED" } else { "DISABLED" });
         println!("Type /help for commands, /exit to quit");
         println!("{}", "=".repeat(60));
         println!();
@@ -388,6 +542,9 @@ impl ChatApp {
         println!("  /config    - Show current configuration");
         println!("  /rag       - Show RAG status");
         println!("  /verify    - Verify blockchain integrity");
+        println!("  /mine      - Show mining statistics");
+        println!("  /minenow   - Manually mine a block with current conversation");
+        println!("  /mining    - Show mining configuration");
         println!("  /exit      - Exit the chat application");
         println!("{}", "-".repeat(40));
         println!();
@@ -398,19 +555,23 @@ impl ChatApp {
         println!("Model: {:?}", self.config.model_path);
         println!("Device: {}", self.config.device);
         println!("Temperature: {}", self.config.temperature);
-        println!("Top-K: {}", self.config.top_k);
-        println!("Top-P: {}", self.config.top_p);
+        println!("Top-K: {:?}", self.config.top_k);
+        println!("Top-P: {:?}", self.config.top_p);
         println!("Max context: {} chars", self.config.max_context_length);
         println!("Max response tokens: {}", self.config.max_response_tokens);
         println!("Timeout: {} sec", self.config.generation_timeout_secs);
         println!("RAG Enabled: {}", self.config.rag_enabled);
         println!("RAG Top-K: {}", self.config.rag_top_k);
         println!("RAG Max Tokens: {}", self.config.rag_max_tokens);
-        println!("Vector Store: {:?}", self.config.vector_store_path);
+        println!("Mining Enabled: {}", self.config.mining_enabled);
+        println!("Mine on chat: {}", self.config.mine_on_chat);
         println!("------------------------------\n");
     }
     
     fn print_goodbye(&self) {
+        if self.config.mining_enabled && self.total_blocks_mined > 0 {
+            println!("\n⛏️ Total blocks mined this session: {}", self.total_blocks_mined);
+        }
         println!("\n{}", "=".repeat(50));
         println!("Goodbye!");
         println!("{}", "=".repeat(50));

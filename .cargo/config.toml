@@ -1,0 +1,44 @@
+# ======================================================================
+# CARGO BUILD CONFIGURATION
+# File: .cargo/config.toml
+# Description: Cargo compiler and build settings
+# ======================================================================
+
+[build]
+# Disable half-precision to avoid rand trait issues with candle-core
+rustflags = ["--cfg", "candle_disable_half"]
+# Number of parallel jobs (adjust based on your CPU)
+jobs = 4
+
+[target.x86_64-unknown-linux-gnu]
+# Use system linker for faster builds
+linker = "cc"
+
+[profile.release]
+# Override release profile settings
+lto = false
+opt-level = 2
+
+[profile.dev]
+# Faster debug builds
+opt-level = 0
+
+[net]
+# Use git CLI for authentication (helpful in Codespaces)
+git-fetch-with-cli = true
+
+# Retry failed downloads
+retry = 3
+
+[term]
+# Colored output
+color = "always"
+
+[alias]
+# Shortcut commands
+b = "build"
+br = "build --release"
+c = "check"
+t = "test"
+r = "run"
+rr = "run --release"

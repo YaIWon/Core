@@ -6,10 +6,11 @@
 // ======================================================================
 
 use anyhow::Result;
+use rand::Rng;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use tracing::{info, debug, warn};
-use candle_core::{Device, Tensor};
+use tracing::{info, debug};
+use candle_core::{Device, Tensor, DType};
 use crate::core::model::base_model::BaseModel;
 use crate::inference::sampling::SamplingConfig;
 
@@ -27,7 +28,7 @@ impl Default for GenerationConfig {
         Self {
             max_new_tokens: 512,
             min_new_tokens: 1,
-            stop_tokens: vec![2], // EOS token
+            stop_tokens: vec![2],
             stop_strings: vec![],
             include_prompt: false,
             stream: false,
@@ -59,44 +60,33 @@ impl Generator {
     }
     
     pub async fn generate(&mut self, prompt: &str) -> Result<String> {
-        self.generate_with_config(prompt, &self.generation_config).await
+        self.generate_with_config(prompt, &self.generation_config.clone()).await
     }
     
     pub async fn generate_with_config(&mut self, prompt: &str, config: &GenerationConfig) -> Result<String> {
-        // Tokenize prompt
         let tokens = self.tokenize(prompt)?;
         let mut generated = tokens.clone();
         
         for _ in 0..config.max_new_tokens {
-            let input_tensor = Tensor::new(&[&generated], &self.device)?;
+            let input_tensor = Tensor::from_slice(&generated, (1, generated.len()), &self.device)?;
             
-            // Forward pass
             let (logits, _, _, _) = self.model.forward(&input_tensor, None, true, false)?;
             
-            // Get last token logits
             let last_logits = logits.squeeze(0)?.get(logits.dim(1)? - 1)?;
             
-            // Sample next token
             let next_token = self.sample_token(&last_logits)?;
             
-            // Check stop conditions
             if config.stop_tokens.contains(&next_token) {
                 break;
             }
             
             generated.push(next_token);
             
-            // Check stop strings (simplified)
             let generated_text = self.detokenize(&generated)?;
             for stop_str in &config.stop_strings {
                 if generated_text.contains(stop_str) {
                     break;
                 }
-            }
-            
-            // Minimum tokens check
-            if generated.len() - tokens.len() >= config.min_new_tokens {
-                // Continue
             }
         }
         
@@ -118,7 +108,7 @@ impl Generator {
         let mut full_response = String::new();
         
         for _ in 0..self.generation_config.max_new_tokens {
-            let input_tensor = Tensor::new(&[&generated], &self.device)?;
+            let input_tensor = Tensor::from_slice(&generated, (1, generated.len()), &self.device)?;
             let (logits, _, _, _) = self.model.forward(&input_tensor, None, true, false)?;
             let last_logits = logits.squeeze(0)?.get(logits.dim(1)? - 1)?;
             let next_token = self.sample_token(&last_logits)?;
@@ -145,21 +135,15 @@ impl Generator {
     }
     
     fn sample_token(&self, logits: &Tensor) -> Result<u32> {
-        use rand::Rng;
-        let mut logits_vec = logits.to_vec1::<f64>()?;
+        let mut logits_vec: Vec<f32> = logits.to_vec1()?;
         
-        // Apply temperature
         if self.sampling_config.temperature != 1.0 && self.sampling_config.temperature > 0.0 {
             for val in &mut logits_vec {
                 *val /= self.sampling_config.temperature;
             }
         }
         
-        // Apply repetition penalty
-        // (simplified - full implementation would track token frequencies)
-        
-        // Softmax
-        let max_val = logits_vec.iter().fold(f64::NEG_INFINITY, |a, &b| a.max(b));
+        let max_val = logits_vec.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));
         let mut sum = 0.0;
         for val in &mut logits_vec {
             *val = (*val - max_val).exp();
@@ -169,52 +153,53 @@ impl Generator {
             *val /= sum;
         }
         
-        // Top-k filtering
-        if self.sampling_config.top_k > 0 && self.sampling_config.top_k < logits_vec.len() {
-            let mut indices: Vec<usize> = (0..logits_vec.len()).collect();
-            indices.sort_by(|&i, &j| logits_vec[j].partial_cmp(&logits_vec[i]).unwrap());
-            let mut new_probs = vec![0.0; logits_vec.len()];
-            let mut new_sum = 0.0;
-            for &idx in indices.iter().take(self.sampling_config.top_k) {
-                new_probs[idx] = logits_vec[idx];
-                new_sum += logits_vec[idx];
-            }
-            for val in &mut new_probs {
-                *val /= new_sum;
-            }
-            logits_vec = new_probs;
-        }
-        
-        // Top-p (nucleus) sampling
-        if self.sampling_config.top_p < 1.0 && self.sampling_config.top_p > 0.0 {
-            let mut indices: Vec<usize> = (0..logits_vec.len()).collect();
-            indices.sort_by(|&i, &j| logits_vec[j].partial_cmp(&logits_vec[i]).unwrap());
-            let mut cumsum = 0.0;
-            let mut keep = vec![false; logits_vec.len()];
-            for &idx in &indices {
-                cumsum += logits_vec[idx];
-                keep[idx] = true;
-                if cumsum >= self.sampling_config.top_p {
-                    break;
+        if let Some(top_k) = self.sampling_config.top_k {
+            if top_k > 0 && top_k < logits_vec.len() {
+                let mut indices: Vec<usize> = (0..logits_vec.len()).collect();
+                indices.sort_by(|&i, &j| logits_vec[j].partial_cmp(&logits_vec[i]).unwrap());
+                let mut new_probs = vec![0.0; logits_vec.len()];
+                let mut new_sum = 0.0;
+                for &idx in indices.iter().take(top_k) {
+                    new_probs[idx] = logits_vec[idx];
+                    new_sum += logits_vec[idx];
                 }
-            }
-            let mut new_sum = 0.0;
-            for i in 0..logits_vec.len() {
-                if !keep[i] {
-                    logits_vec[i] = 0.0;
-                } else {
-                    new_sum += logits_vec[i];
+                for val in &mut new_probs {
+                    *val /= new_sum;
                 }
-            }
-            for val in &mut logits_vec {
-                *val /= new_sum;
+                logits_vec = new_probs;
             }
         }
         
-        // Sample
+        if let Some(top_p) = self.sampling_config.top_p {
+            if top_p < 1.0 && top_p > 0.0 {
+                let mut indices: Vec<usize> = (0..logits_vec.len()).collect();
+                indices.sort_by(|&i, &j| logits_vec[j].partial_cmp(&logits_vec[i]).unwrap());
+                let mut cumsum = 0.0;
+                let mut keep = vec![false; logits_vec.len()];
+                for &idx in &indices {
+                    cumsum += logits_vec[idx];
+                    keep[idx] = true;
+                    if cumsum >= top_p {
+                        break;
+                    }
+                }
+                let mut new_sum = 0.0;
+                for i in 0..logits_vec.len() {
+                    if !keep[i] {
+                        logits_vec[i] = 0.0;
+                    } else {
+                        new_sum += logits_vec[i];
+                    }
+                }
+                for val in &mut logits_vec {
+                    *val /= new_sum;
+                }
+            }
+        }
+        
         let mut rng = rand::thread_rng();
         let mut cumulative = 0.0;
-        let rand_val: f64 = rng.gen();
+        let rand_val: f32 = rng.gen();
         let mut next_token = 0;
         for (i, &prob) in logits_vec.iter().enumerate() {
             cumulative += prob;
@@ -228,13 +213,64 @@ impl Generator {
     }
     
     fn tokenize(&self, text: &str) -> Result<Vec<u32>> {
-        // Simplified tokenization
-        // In production, use a proper tokenizer
         Ok(text.chars().map(|c| c as u32).collect())
     }
     
     fn detokenize(&self, tokens: &[u32]) -> Result<String> {
-        // Simplified detokenization
         Ok(tokens.iter().map(|&t| char::from_u32(t).unwrap_or('�')).collect())
+    }
+}
+
+impl Clone for Generator {
+    fn clone(&self) -> Self {
+        Self {
+            model: self.model.clone(),
+            sampling_config: self.sampling_config.clone(),
+            device: self.device.clone(),
+            generation_config: self.generation_config.clone(),
+        }
+    }
+}
+
+impl Clone for GenerationConfig {
+    fn clone(&self) -> Self {
+        Self {
+            max_new_tokens: self.max_new_tokens,
+            min_new_tokens: self.min_new_tokens,
+            stop_tokens: self.stop_tokens.clone(),
+            stop_strings: self.stop_strings.clone(),
+            include_prompt: self.include_prompt,
+            stream: self.stream,
+        }
+    }
+}
+
+// ======================================================================
+// TESTS
+// ======================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::model::base_model::{ModelConfig, ModelBuilder};
+    use crate::inference::sampling::SamplingConfig;
+    
+    #[tokio::test]
+    async fn test_generator_creation() -> Result<()> {
+        let model = ModelBuilder::new()
+            .with_config(ModelConfig {
+                num_hidden_layers: 2,
+                hidden_size: 256,
+                intermediate_size: 1024,
+                ..Default::default()
+            })
+            .with_device(Device::Cpu)
+            .build()?;
+        
+        let sampling = SamplingConfig::default();
+        let generator = Generator::new(model, sampling);
+        
+        assert!(generator.generate("Hello").await.is_ok());
+        Ok(())
     }
 }
