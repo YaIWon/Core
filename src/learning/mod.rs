@@ -235,7 +235,7 @@ pub async fn create_mining_coordinator(
     // Initialize blockchain connections
     {
         let mut bc = blockchain.write().await;
-        bc.init_ethereum("https://cloudflare-eth.com", 1);
+        bc.init_ethereum();
         bc.start_mining();
         info!("🔗 Mining coordinator created with blockchain access");
     }

@@ -18,8 +18,8 @@ pub mod scanner;
 pub mod learning;
 pub mod system;
 pub mod utils;
-pub mod blockchain;     // Universal blockchain access (read/write all chains)
-pub mod coin;           // Marisselle's own coin (future, optional)
+pub mod blockchain;
+pub mod coin;
 
 // ======================================================================
 // CORE RE-EXPORTS
@@ -239,26 +239,16 @@ pub use utils::marisselle::MarisselleConfig;
 pub use utils::teacher::TeacherConfig;
 
 // ======================================================================
-// BLOCKCHAIN RE-EXPORTS (UPDATED -直接从 mod.rs 导出)
+// BLOCKCHAIN RE-EXPORTS (FIXED - using bitcoin_client)
 // ======================================================================
 
-// Bitcoin
-pub use blockchain::bitcoin::{BitcoinRpcClient, BitcoinBlock};
-
-// Ethereum
-pub use blockchain::ethereum::{EthereumRpcClient, EthereumTransaction};
-
-// Mining
-pub use blockchain::{CpuMiner, MiningResult, MiningStats};
-
-// RPC Endpoints
-pub use blockchain::RpcEndpoints;
-
-// Universal Access
-pub use blockchain::UniversalBlockchainAccess;
+pub use blockchain::bitcoin_client::BitcoinRpcClient;
+pub use blockchain::bitcoin_client::BitcoinBlock;
+pub use blockchain::ethereum::EthereumRpcClient;
+pub use blockchain::{CpuMiner, MiningResult, MiningStats, RpcEndpoints, UniversalBlockchainAccess};
 
 // ======================================================================
-// COIN RE-EXPORTS (Future coin creation)
+// COIN RE-EXPORTS
 // ======================================================================
 
 pub use coin::marisselle_coin::MarisselleCoin as MarisselleCoinToken;
@@ -309,16 +299,11 @@ pub mod prelude {
     // Utils
     pub use crate::utils::{MarisselleConfig, TeacherConfig, LmError, LmResult};
     
-    // Blockchain (UPDATED)
-    pub use crate::blockchain::{
-        UniversalBlockchainAccess,
-        BitcoinRpcClient,
-        EthereumRpcClient,
-        CpuMiner,
-        MiningResult,
-        MiningStats,
-        RpcEndpoints,
-    };
+    // Blockchain (FIXED - using bitcoin_client)
+    pub use crate::blockchain::bitcoin_client::BitcoinRpcClient;
+    pub use crate::blockchain::bitcoin_client::BitcoinBlock;
+    pub use crate::blockchain::ethereum::EthereumRpcClient;
+    pub use crate::blockchain::{CpuMiner, MiningResult, MiningStats, RpcEndpoints, UniversalBlockchainAccess};
 }
 
 // ======================================================================

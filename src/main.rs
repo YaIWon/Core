@@ -47,7 +47,6 @@ use self_evolving_lm::learning::{
     Sender,
     Urgency,
     AckStatus,
-    ProtocolAction,
     ConversationManager as ProtocolConversationManager,
     Conversation as ProtocolConversation,
     ConversationStatus,
@@ -94,6 +93,8 @@ use self_evolving_lm::learning::{
     Curriculum,
     Topic,
 };
+
+use self_evolving_lm::learning::protocol::ProtocolAction;
 
 // ======================================================================
 // SYSTEM MODULES
@@ -150,13 +151,11 @@ use self_evolving_lm::system::{
 };
 
 // ======================================================================
-// BLOCKCHAIN MODULES (NEW)
+// BLOCKCHAIN MODULES
 // ======================================================================
 
 use self_evolving_lm::blockchain::{
     UniversalBlockchainAccess,
-    BitcoinRpcClient,
-    EthereumRpcClient,
     CpuMiner,
     MiningResult,
     MiningStats,
@@ -178,7 +177,7 @@ const SHM_CHECK_INTERVAL_MS: u64 = 100;
 const TEACHER_HEALTH_CHECK_INTERVAL_SECS: u64 = 30;
 const PROTOCOL_SYNC_INTERVAL_SECS: u64 = 5;
 const AUTONOMOUS_THINK_INTERVAL_SECS: u64 = 60;
-const MINING_INTERVAL_SECS: u64 = 10;  // NEW: Mine every 10 seconds when learning
+const MINING_INTERVAL_SECS: u64 = 10;
 
 // ======================================================================
 // SHARED MEMORY LISTENER (For Teacher -> LM messages)
@@ -243,7 +242,7 @@ impl SharedMemoryListener {
     }
     
     async fn handle_protocol_message(&mut self, message: Message, seq: u64) {
-        info!("Received protocol message: {:?} from {}", message.msg_type, message.sender);
+        info!("Received protocol message: {:?} from {:?}", message.msg_type, message.sender);
         
         self.logger.log_teacher_to_lm(
             &format!("Protocol message: {:?}", message.msg_type),
@@ -440,7 +439,7 @@ async fn main() -> Result<()> {
     let command_executor = Arc::new(CommandExecutor::new());
     
     // ==================================================================
-    // INITIALIZE BLOCKCHAIN ACCESS (NEW)
+    // INITIALIZE BLOCKCHAIN ACCESS
     // ==================================================================
     
     info!("🔗 Initializing blockchain access...");
@@ -459,10 +458,7 @@ async fn main() -> Result<()> {
     */
     
     // Configure Ethereum (using free public endpoint)
-    blockchain_access.init_ethereum(
-        "https://cloudflare-eth.com",  // Free public Ethereum RPC
-        1  // Chain ID (1 = Ethereum mainnet)
-    );
+    blockchain_access.init_ethereum();
     info!("   Ethereum RPC configured");
     
     // Start CPU mining (REAL mining - no ASIC needed)
@@ -614,11 +610,12 @@ async fn main() -> Result<()> {
     info!("📚 Loaded curriculum: {} topics, {} estimated lessons", 
           curriculum.topics.len(), curriculum.get_total_lessons());
     
-    autonomous_manager.assign_goal("Complete blockchain curriculum", 10).await;
-    autonomous_manager.assign_goal("Master system access capabilities", 9).await;
-    autonomous_manager.assign_goal("Develop creative writing skills", 8).await;
-    autonomous_manager.assign_goal("Learn to self-upgrade and evolve", 10).await;
-    autonomous_manager.assign_goal("Mine blocks when learning", 8).await;  // NEW
+    // FIXED: Using correct method name
+    autonomous_manager.set_goal("Complete blockchain curriculum", 10).await;
+    autonomous_manager.set_goal("Master system access capabilities", 9).await;
+    autonomous_manager.set_goal("Develop creative writing skills", 8).await;
+    autonomous_manager.set_goal("Learn to self-upgrade and evolve", 10).await;
+    autonomous_manager.set_goal("Mine blocks when learning", 8).await;
     
     // ==================================================================
     // START FILE WATCHER
@@ -703,7 +700,9 @@ async fn main() -> Result<()> {
     // NEW: Mining stats reporter task
     let mining_logger = logger.clone();
     let mining_access = Arc::new(RwLock::new(blockchain_access));
+    let mining_access_clone = mining_access.clone();
     let mining_task = tokio::spawn(async move {
+        let mining_access = mining_access_clone;
         let mut interval = tokio::time::interval(Duration::from_secs(30));
         loop {
             interval.tick().await;
@@ -866,7 +865,7 @@ async fn main() -> Result<()> {
                 let now = std::time::Instant::now();
                 let elapsed = now.duration_since(last_mining_time);
                 if elapsed.as_millis() > 0 {
-                    mining_access.write().await.miner.adjust_difficulty(elapsed.as_millis() as u64);
+                    mining_access.write().await.adjust_mining_difficulty(elapsed.as_millis() as u64);
                 }
                 last_mining_time = now;
             }

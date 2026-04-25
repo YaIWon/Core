@@ -885,4 +885,12 @@ impl AutonomousManager {
         self.thinker.stop().await;
         self.executor.stop().await;
     }
+
+    pub async fn set_goal(&self, description: &str, priority: u8) -> String {
+        self.thinker.set_goal(description, priority).await
+    }
+
+    pub async fn add_goal(&self, description: &str, priority: u8) -> String {
+        self.thinker.set_goal(description, priority).await
+    }
 }

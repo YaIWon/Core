@@ -233,10 +233,10 @@ fn simple_hash(s: &str) -> u64 {
 }
 
 // ======================================================================
-// TEXT CHUNKING
+// TEXT CHUNKING - NOW PUBLIC
 // ======================================================================
 
-fn chunk_text_with_overlap(text: &str, chunk_size: usize, overlap: usize) -> Vec<String> {
+pub fn chunk_text_with_overlap(text: &str, chunk_size: usize, overlap: usize) -> Vec<String> {
     let mut chunks = Vec::new();
     
     // Split into sentences first

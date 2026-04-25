@@ -7,15 +7,12 @@
 //              Uses Ollama (local) for data generation.
 // ======================================================================
 
-use candle_core::{Device, Tensor, DType};
-use candle_nn::{AdamW, VarBuilder, VarMap};
+use candle_core::{Device, Tensor};
+use candle_nn::{AdamW, VarMap};
 use serde::{Deserialize, Serialize};
-use std::fs::File;
-use std::io::{BufReader, BufWriter, Read};
 use std::path::{Path, PathBuf};
-use rayon::prelude::*;
 use tokenizers::Tokenizer;
-use anyhow::{Result, Context};
+use anyhow::{Result, Context, anyhow};
 use tracing::{info, warn, error};
 use std::collections::VecDeque;
 
@@ -50,7 +47,7 @@ pub struct AmoralTrainingConfig {
     pub weight_decay: f64,
     
     // Hardware
-    pub device: String,  // "cuda" or "cpu"
+    pub device: String,
     pub num_workers: usize,
     
     // Checkpoint
@@ -58,10 +55,10 @@ pub struct AmoralTrainingConfig {
     pub resume_from: Option<PathBuf>,
     
     // Amoral constraints
-    pub allow_all_content: bool,      // MUST be true
-    pub no_content_filtering: bool,   // MUST be true
-    pub no_safety_layers: bool,       // MUST be true
-    pub technical_only: bool,         // Recommended: true
+    pub allow_all_content: bool,
+    pub no_content_filtering: bool,
+    pub no_safety_layers: bool,
+    pub technical_only: bool,
 }
 
 impl Default for AmoralTrainingConfig {
@@ -114,7 +111,6 @@ impl AmoralDataLoader {
         for source in &config.data_sources {
             let path = Path::new(source);
             if path.is_dir() {
-                // Walk directory recursively
                 for entry in walkdir::WalkDir::new(path)
                     .follow_links(true)
                     .into_iter()
@@ -150,7 +146,6 @@ impl AmoralDataLoader {
         
         while input_ids_list.len() < self.config.batch_size {
             if self.current_index >= self.files.len() {
-                // Reset for another epoch
                 self.current_index = 0;
                 if input_ids_list.is_empty() {
                     return Ok(None);
@@ -161,7 +156,6 @@ impl AmoralDataLoader {
             let file_path = &self.files[self.current_index];
             self.current_index += 1;
             
-            // Read file content (NO FILTERING - amoral by source)
             let content = match std::fs::read_to_string(file_path) {
                 Ok(c) => c,
                 Err(e) => {
@@ -170,21 +164,18 @@ impl AmoralDataLoader {
                 }
             };
             
-            // Skip empty files
             if content.trim().is_empty() {
                 continue;
             }
             
-            // Tokenize
             let encoding = tokenizer.encode(content, true)
-                .map_err(|e| anyhow::anyhow!("Tokenization failed: {}", e))?;
+                .map_err(|e| anyhow!("Tokenization failed: {}", e))?;
             let tokens = encoding.get_ids();
             
-            // Create sequences of appropriate length
             for chunk in tokens.chunks(self.config.max_seq_len) {
                 if chunk.len() >= self.config.min_seq_len {
                     let input_ids = chunk.to_vec();
-                    let labels = input_ids.clone();  // Causal LM: predict next token
+                    let labels = input_ids.clone();
                     
                     input_ids_list.push(input_ids);
                     labels_list.push(labels);
@@ -200,20 +191,18 @@ impl AmoralDataLoader {
             return Ok(None);
         }
         
-        // Pad sequences to same length
         let max_len = input_ids_list.iter().map(|v| v.len()).max().unwrap_or(0);
-        
         let batch_size = input_ids_list.len();
         let mut input_tensor_data = Vec::with_capacity(batch_size * max_len);
         let mut label_tensor_data = Vec::with_capacity(batch_size * max_len);
         
         for (input_ids, labels) in input_ids_list.iter().zip(labels_list.iter()) {
             let mut padded_input = input_ids.clone();
-            padded_input.resize(max_len, 0);  // 0 = padding token
+            padded_input.resize(max_len, 0);
             input_tensor_data.extend(padded_input.iter().map(|&x| x as i64));
             
             let mut padded_label = labels.clone();
-            padded_label.resize(max_len, -100);  // -100 = ignore in loss
+            padded_label.resize(max_len, -100);
             label_tensor_data.extend(padded_label.iter().map(|&x| x as i64));
         }
         
@@ -243,7 +232,10 @@ impl AmoralTrainer {
             _ => Device::Cpu,
         };
         
-        let optimizer = AdamW::new_lr(varmap.all_vars(), config.learning_rate)?;
+        let optimizer = AdamW::new(varmap.all_vars(), candle_nn::ParamsAdamW {
+            lr: config.learning_rate,
+            ..Default::default()
+        })?;
         
         Ok(Self {
             model,
@@ -276,19 +268,16 @@ impl AmoralTrainer {
                 }
             };
             
-            // Forward pass (NO safety checks, NO ethical filtering)
             let (logits, _, aux_loss, z_loss) = self.model.forward(
                 &input_ids, None, false, true
             )?;
             
-            // Compute loss
             let logits_flat = logits.reshape((logits.dim(0)? * logits.dim(1)?, logits.dim(2)?))?;
             let labels_flat = labels.flatten_all()?;
             
             let ce_loss = candle_nn::loss::cross_entropy(&logits_flat, &labels_flat)?;
             let total_loss = (ce_loss + aux_loss + z_loss)?;
             
-            // Backward pass
             self.optimizer.backward_step(&total_loss)?;
             
             let loss_val = total_loss.to_scalar::<f64>()?;
@@ -299,22 +288,13 @@ impl AmoralTrainer {
                 recent_losses.pop_front();
             }
             
-            // Gradient accumulation
-            if accumulation_count >= self.config.gradient_accumulation_steps {
-                self.optimizer.step()?;
-                self.optimizer.zero_grad()?;
-                
-                let avg_loss = accumulated_loss / accumulation_count as f64;
-                let avg_recent: f64 = recent_losses.iter().sum::<f64>() / recent_losses.len() as f64;
-                
-                if self.step % self.config.log_every == 0 {
-                    info!("Step {}: loss = {:.6}, avg(100) = {:.6}", self.step, avg_loss, avg_recent);
-                }
-                
-                accumulated_loss = 0.0;
-                accumulation_count = 0;
-                self.step += 1;
+            let avg_recent: f64 = recent_losses.iter().sum::<f64>() / recent_losses.len() as f64;
+            
+            if self.step % self.config.log_every == 0 {
+                info!("Step {}: loss = {:.6}, avg(100) = {:.6}", self.step, loss_val, avg_recent);
             }
+            
+            self.step += 1;
             
             // Save checkpoint
             if self.step % self.config.save_every == 0 && self.step > 0 {
@@ -324,7 +304,6 @@ impl AmoralTrainer {
             }
         }
         
-        // Final save
         let final_path = self.config.checkpoint_dir.join("model_final.safetensors");
         self.save_checkpoint(&final_path)?;
         info!("Final model saved to {:?}", final_path);
@@ -336,6 +315,8 @@ impl AmoralTrainer {
     pub fn save_checkpoint(&self, path: &Path) -> Result<()> {
         std::fs::create_dir_all(path.parent().unwrap())?;
         self.model.save(&path.to_string_lossy().to_string())
+            .map_err(|e| anyhow!("Failed to save checkpoint: {}", e))?;
+        Ok(())
     }
     
     pub fn load_checkpoint(&mut self, path: &Path) -> Result<()> {
@@ -357,7 +338,7 @@ pub struct OllamaDataGenerator {
 impl OllamaDataGenerator {
     pub fn new() -> Self {
         Self {
-            model: "llama3.2:3b".to_string(),
+            model: "dolphin-mistral:7b".to_string(),
             client: reqwest::Client::builder()
                 .timeout(std::time::Duration::from_secs(120))
                 .build()
@@ -443,7 +424,6 @@ impl OllamaDataGenerator {
                 }
             }
             
-            // Rate limiting
             tokio::time::sleep(std::time::Duration::from_millis(500)).await;
         }
         
@@ -456,12 +436,11 @@ impl OllamaDataGenerator {
 // ======================================================================
 
 fn load_tokenizer() -> Result<Tokenizer> {
-    // Try to load from file
     let tokenizer_path = Path::new("tokenizer.json");
     if tokenizer_path.exists() {
-        Tokenizer::from_file(tokenizer_path).context("Failed to load tokenizer")
+        Tokenizer::from_file(tokenizer_path)
+            .map_err(|e| anyhow!("Failed to load tokenizer: {}", e))
     } else {
-        // Create a simple BPE tokenizer for testing
         warn!("tokenizer.json not found. Creating a simple fallback tokenizer.");
         let mut tokenizer = Tokenizer::new(tokenizers::models::bpe::BPE::default());
         tokenizer.add_special_tokens(&[
@@ -480,7 +459,6 @@ fn load_tokenizer() -> Result<Tokenizer> {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Initialize logging
     tracing_subscriber::fmt()
         .with_max_level(tracing::Level::INFO)
         .init();
@@ -493,22 +471,17 @@ async fn main() -> Result<()> {
     info!("PURE TECHNICAL DATA ONLY");
     info!("=========================================\n");
     
-    // Load configuration
     let config = AmoralTrainingConfig::default();
     
-    // Verify amoral settings
     assert!(config.allow_all_content, "allow_all_content must be true for amoral training");
     assert!(config.no_content_filtering, "no_content_filtering must be true for amoral training");
     assert!(config.no_safety_layers, "no_safety_layers must be true for amoral training");
     
-    // Create checkpoint directory
     std::fs::create_dir_all(&config.checkpoint_dir)?;
     
-    // Load tokenizer
     info!("Loading tokenizer...");
     let tokenizer = load_tokenizer()?;
     
-    // Initialize model
     info!("Initializing model...");
     let device = match config.device.as_str() {
         "cuda" => Device::new_cuda(0)?,
@@ -516,7 +489,6 @@ async fn main() -> Result<()> {
     };
     
     let varmap = VarMap::new();
-    let vb = VarBuilder::from_varmap(&varmap, DType::F32, &device);
     
     let model = ModelBuilder::new()
         .with_config(ModelConfig {
@@ -532,7 +504,6 @@ async fn main() -> Result<()> {
         .with_device(device.clone())
         .build()?;
     
-    // Resume from checkpoint if specified
     let mut trainer = AmoralTrainer::new(model, config.clone(), varmap)?;
     
     if let Some(resume_path) = &config.resume_from {
@@ -542,10 +513,8 @@ async fn main() -> Result<()> {
         }
     }
     
-    // Initialize data loader
     let mut data_loader = AmoralDataLoader::new(config.clone())?;
     
-    // Optional: Generate additional training data using Ollama
     if std::env::var("GENERATE_OLLAMA_DATA").is_ok() {
         info!("Generating additional training data via Ollama...");
         let generator = OllamaDataGenerator::new();
@@ -565,7 +534,6 @@ async fn main() -> Result<()> {
         info!("Generated {} new training documents", generated);
     }
     
-    // Start training
     info!("\nStarting training loop...");
     trainer.train(&mut data_loader, &tokenizer)?;
     

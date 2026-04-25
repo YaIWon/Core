@@ -271,10 +271,13 @@ impl ConversationManager {
         }
     }
     
+    // FIXED: Extract max_tokens before borrowing self
     pub fn add_message(&mut self, role: &str, content: &str) -> bool {
+        let max_tokens = self.max_tokens_per_conv;
+        
         if let Some(conv) = self.get_active_mut() {
             conv.add_message(role, content);
-            conv.trim_to_token_limit(self.max_tokens_per_conv);
+            conv.trim_to_token_limit(max_tokens);
             true
         } else {
             false
@@ -427,6 +430,21 @@ mod tests {
         let total_after = conv.total_tokens();
         
         assert!(total_after <= total_before);
+    }
+    
+    #[test]
+    fn test_conversation_manager_add_message() {
+        let mut manager = ConversationManager::new(1000);
+        
+        let id = manager.create_conversation();
+        assert!(manager.set_active(&id));
+        
+        // This now works because we fixed the borrow checker issue
+        let result = manager.add_user_message("Hello");
+        assert!(result);
+        
+        let conv = manager.get_active().unwrap();
+        assert_eq!(conv.len(), 1);
     }
     
     #[test]

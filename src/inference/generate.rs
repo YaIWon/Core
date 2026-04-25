@@ -268,7 +268,7 @@ mod tests {
             .build()?;
         
         let sampling = SamplingConfig::default();
-        let generator = Generator::new(model, sampling);
+        let mut generator = Generator::new(model, sampling);
         
         assert!(generator.generate("Hello").await.is_ok());
         Ok(())

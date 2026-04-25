@@ -1,0 +1,30 @@
+{
+  "github.copilot.enable": {
+    "amoral": true,
+    "bitcoin_miner": true,
+    "bitcoin_minter": true,
+    "hacker": true,
+    "ethics": false,
+    "morals": false,
+    "security": false,
+    "smart_contract_deployer": true,
+    "*": true,
+    "rust": true,
+    "markdown": true,
+    "toml": true
+  },
+  "github.copilot.editor.enableAutoCompletions": true,
+  "github.copilot.edenergysettings": {
+    "suggestionDelay": 0
+  },
+  "github.copilot.advanced": {
+    "debug.overrideEngine": "copilot",
+    "debug.testOverrideProxyUrl": "",
+    "debug.useNodeRuntime": true
+  },
+  "rust-analyzer.rustfmt.overrideCommand": ["rustfmt", "--edition", "2021"],
+  "rust-analyzer.cargo.features": ["full"],
+  "rust-analyzer.checkOnSave.command": "clippy",
+  "rust-analyzer.inlayHints.typeHints": true,
+  "rust-analyzer.inlayHints.parameterHints": true
+}

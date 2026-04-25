@@ -812,4 +812,20 @@ pub async fn start_amoral_teaching(model: &str, training_dir: PathBuf, topics: V
 
 // Compatibility exports
 pub use AmoralOllamaClient as AmoralDeepSeekClient;
-pub type SharedMemoryChannel = ();
+pub struct SharedMemoryChannel;
+
+impl SharedMemoryChannel {
+    pub fn new() -> Result<Self> {
+        Ok(Self)
+    }
+
+    pub fn read(&self) -> Option<(String, u64)> {
+        None
+    }
+
+    pub fn write(&self, _data: &str, _seq: u64) -> Result<()> {
+        Ok(())
+    }
+
+    pub fn signal_ready(&self) {}
+}

@@ -5,10 +5,9 @@
 //              Matches candle-core 0.4 API. ZERO ERRORS.
 // ======================================================================
 
-use candle_core::{Device, Tensor, DType, Result, Shape, IndexOp};
+use candle_core::{Device, Tensor, DType};
 use candle_nn::{Linear, Embedding, Module, VarBuilder, VarMap, Optimizer, AdamW};
 use serde::{Deserialize, Serialize};
-use std::collections::VecDeque;
 use std::sync::{Arc, Mutex, RwLock};
 use std::fs::File;
 use std::io::{BufReader, BufWriter, Write, Read};
@@ -16,7 +15,6 @@ use flate2::read::GzDecoder;
 use flate2::write::GzEncoder;
 use flate2::Compression;
 use rand::Rng;
-use rayon::prelude::*;
 
 // ======================================================================
 // MODEL CONFIGURATION
@@ -101,7 +99,7 @@ impl RMSNorm {
         Self { weight, eps }
     }
     
-    pub fn forward(&self, x: &Tensor) -> Result<Tensor> {
+    pub fn forward(&self, x: &Tensor) -> candle_core::Result<Tensor> {
         let variance = x.sqr()?.mean_keepdim(1)?;
         let inv_std = (variance + self.eps)?.sqrt()?.recip()?;
         let normalized = x.broadcast_mul(&inv_std)?;
@@ -121,7 +119,7 @@ pub struct RotaryEmbedding {
 }
 
 impl RotaryEmbedding {
-    pub fn new(config: &ModelConfig, device: &Device) -> Result<Self> {
+    pub fn new(config: &ModelConfig, device: &Device) -> candle_core::Result<Self> {
         let dim = config.hidden_size / config.num_attention_heads;
         let base = config.rope_theta;
         
@@ -145,7 +143,7 @@ impl RotaryEmbedding {
         })
     }
     
-    pub fn forward(&self, q: &Tensor, k: &Tensor, position_ids: &Tensor) -> Result<(Tensor, Tensor)> {
+    pub fn forward(&self, q: &Tensor, k: &Tensor, position_ids: &Tensor) -> candle_core::Result<(Tensor, Tensor)> {
         let (_b_sz, _q_len, _n_head, head_dim) = q.dims4()?;
         
         let inv_freq = self.inv_freq.to_device(q.device())?;
@@ -173,7 +171,7 @@ impl RotaryEmbedding {
         Ok((q_out, k_out))
     }
     
-    fn rotate_half(x: &Tensor, head_dim: usize) -> Result<Tensor> {
+    fn rotate_half(x: &Tensor, head_dim: usize) -> candle_core::Result<Tensor> {
         let x1 = x.narrow(3, 0, head_dim / 2)?;
         let x2 = x.narrow(3, head_dim / 2, head_dim / 2)?;
         Tensor::cat(&[&x2.neg()?, &x1], 3)
@@ -202,7 +200,7 @@ impl SwiGLU {
         }
     }
     
-    pub fn forward(&self, x: &Tensor, train: bool) -> Result<Tensor> {
+    pub fn forward(&self, x: &Tensor, train: bool) -> candle_core::Result<Tensor> {
         let gate = self.gate_proj.forward(x)?;
         let gate = gate.silu()?;
         let up = self.up_proj.forward(x)?;
@@ -240,7 +238,7 @@ pub struct Attention {
 }
 
 impl Attention {
-    pub fn new(config: &ModelConfig, vb: VarBuilder, rotary_emb: RotaryEmbedding) -> Result<Self> {
+    pub fn new(config: &ModelConfig, vb: VarBuilder, rotary_emb: RotaryEmbedding) -> candle_core::Result<Self> {
         let hidden_size = config.hidden_size;
         let num_heads = config.num_attention_heads;
         let num_kv_heads = config.num_key_value_heads;
@@ -280,7 +278,7 @@ impl Attention {
         })
     }
     
-    fn repeat_kv(&self, x: &Tensor) -> Result<Tensor> {
+    fn repeat_kv(&self, x: &Tensor) -> candle_core::Result<Tensor> {
         let (b_sz, seq_len, n_kv_head, head_dim) = x.dims4()?;
         if n_kv_head == self.num_heads {
             Ok(x.clone())
@@ -298,7 +296,7 @@ impl Attention {
         kv_cache: Option<&mut KvCache>,
         mask: Option<&Tensor>,
         train: bool,
-    ) -> Result<Tensor> {
+    ) -> candle_core::Result<Tensor> {
         let (b_sz, q_len, _) = x.dims3()?;
         
         let mut q = self.q_proj.forward(x)?;
@@ -331,7 +329,8 @@ impl Attention {
         
         let scale = 1.0 / (self.head_dim as f32).sqrt();
         let scores = q.matmul(&k.t()?)?;
-        let scores = (scores * scale)?;
+        let scale_tensor = Tensor::new(scale, scores.device())?;
+        let scores = scores.broadcast_mul(&scale_tensor)?;
         
         let scores = if let Some(mask) = mask {
             scores.broadcast_add(mask)?
@@ -377,7 +376,7 @@ impl KvCache {
         }
     }
     
-    pub fn append(&mut self, k: Tensor, v: Tensor) -> Result<(Tensor, Tensor)> {
+    pub fn append(&mut self, k: Tensor, v: Tensor) -> candle_core::Result<(Tensor, Tensor)> {
         let k = k.transpose(1, 2)?.contiguous()?;
         let v = v.transpose(1, 2)?.contiguous()?;
         
@@ -431,7 +430,7 @@ pub struct DecoderLayer {
 }
 
 impl DecoderLayer {
-    pub fn new(config: &ModelConfig, vb: VarBuilder, rotary_emb: RotaryEmbedding, layer_idx: usize) -> Result<Self> {
+    pub fn new(config: &ModelConfig, vb: VarBuilder, rotary_emb: RotaryEmbedding, _layer_idx: usize) -> candle_core::Result<Self> {
         let input_layernorm_weight = vb.get((config.hidden_size,), &format!("input_layernorm.weight"))?;
         let input_layernorm = RMSNorm::new(input_layernorm_weight, config.rms_norm_eps);
         
@@ -473,7 +472,7 @@ impl DecoderLayer {
         kv_cache: Option<&mut KvCache>,
         mask: Option<&Tensor>,
         train: bool,
-    ) -> Result<Tensor> {
+    ) -> candle_core::Result<Tensor> {
         if self.use_parallel_residual {
             let residual = x.clone();
             let x_norm = self.input_layernorm.forward(x)?;
@@ -514,7 +513,7 @@ pub struct BaseModel {
 }
 
 impl BaseModel {
-    pub fn new(config: ModelConfig, vb: VarBuilder, gradient_checkpointing: bool) -> Result<Self> {
+    pub fn new(config: ModelConfig, vb: VarBuilder, gradient_checkpointing: bool) -> candle_core::Result<Self> {
         let device = vb.device().clone();
         let rotary_emb = RotaryEmbedding::new(&config, &device)?;
         
@@ -570,7 +569,7 @@ impl BaseModel {
         position_ids: Option<&Tensor>,
         use_cache: bool,
         train: bool,
-    ) -> Result<(Tensor, Option<Vec<KvCache>>, Tensor, Tensor)> {
+    ) -> candle_core::Result<(Tensor, Option<Vec<KvCache>>, Tensor, Tensor)> {
         let (b_sz, seq_len) = input_ids.dims2()?;
         
         let mut x = self.embed_tokens.forward(input_ids)?;
@@ -582,31 +581,47 @@ impl BaseModel {
                 .broadcast_as((b_sz, seq_len))?,
         };
         
-        let mut kv_caches_opt = if use_cache {
-            let mut caches = self.kv_caches.lock().unwrap();
-            for cache in caches.iter_mut() {
+        let mut guard_opt = if use_cache {
+            let mut guard = self.kv_caches.lock().unwrap();
+            for cache in guard.iter_mut() {
                 cache.reset();
             }
-            Some(caches)
+            Some(guard)
         } else {
             None
         };
         
-        for (i, layer) in self.layers.iter().enumerate() {
-            let kv_cache = kv_caches_opt.as_mut().and_then(|caches| caches.get_mut(i));
-            x = layer.forward(&x, &position_ids, kv_cache, None, train)?;
-        }
+        let mut kv_caches_opt = guard_opt.as_mut().map(|g| &mut **g);
         
-        let x = self.norm.forward(&x)?;
-        let logits = self.lm_head.forward(&x)?;
-        
-        let aux_loss = Tensor::zeros((), DType::F32, &self.device)?;
-        let z_loss = Tensor::zeros((), DType::F32, &self.device)?;
-        
-        Ok((logits, kv_caches_opt, aux_loss, z_loss))
+    for (i, layer) in self.layers.iter().enumerate() {
+        let kv_cache = if let Some(caches) = kv_caches_opt.as_mut() {
+            if i < caches.len() {
+                Some(&mut caches[i])
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        x = layer.forward(&x, &position_ids, kv_cache, None, train)?;
     }
-    
-    pub fn generate(
+
+    let x = self.norm.forward(&x)?;
+    let logits = self.lm_head.forward(&x)?;
+
+    let kv_caches = if use_cache {
+        guard_opt.map(|guard| guard.iter().cloned().collect())
+    } else {
+        None
+    };
+
+    let aux_loss = Tensor::new(0.0f32, &self.device)?;
+    let z_loss = Tensor::new(0.0f32, &self.device)?;
+
+    Ok((logits, kv_caches, aux_loss, z_loss))
+}
+
+pub fn generate(
         &self,
         prompt: &[u32],
         max_new_tokens: usize,
@@ -614,7 +629,7 @@ impl BaseModel {
         top_k: usize,
         top_p: f64,
         repetition_penalty: f64,
-    ) -> Result<Vec<u32>> {
+    ) -> candle_core::Result<Vec<u32>> {
         let mut generated = prompt.to_vec();
         let mut kv_caches: Vec<KvCache> = (0..self.config.num_hidden_layers)
             .map(|_| KvCache::new(self.config.max_position_embeddings))
@@ -626,7 +641,7 @@ impl BaseModel {
             let input_ids = Tensor::from_slice(&generated[start_pos..], (1, generated.len() - start_pos), &self.device)?;
             let position_ids = Tensor::arange(start_pos as i64, generated.len() as i64, &self.device)?.unsqueeze(0)?;
             
-            let (logits, _, _, _) = self.forward(&input_ids, Some(&position_ids), true, false)?;
+            let (logits, _, _aux_loss, _z_loss) = self.forward(&input_ids, Some(&position_ids), true, false)?;
             let next_token_logits = logits.squeeze(0)?.get(logits.dim(1)? - 1)?;
             
             let mut logits_vec: Vec<f32> = next_token_logits.to_vec1()?;
@@ -729,7 +744,7 @@ impl BaseModel {
         Ok(generated)
     }
     
-    pub fn train_step(&self, input_ids: &Tensor, labels: &Tensor) -> Result<f32> {
+    pub fn train_step(&self, input_ids: &Tensor, labels: &Tensor) -> candle_core::Result<f32> {
         let (logits, _, aux_loss, z_loss) = self.forward(input_ids, None, false, true)?;
         
         let logits = logits.reshape((logits.dim(0)? * logits.dim(1)?, logits.dim(2)?))?;
@@ -748,33 +763,33 @@ impl BaseModel {
         Ok(total_loss.to_scalar::<f32>()?)
     }
     
-    pub fn save(&self, path: &str) -> Result<()> {
-        let file = File::create(path)?;
-        let writer = BufWriter::new(file);
-        let mut encoder = GzEncoder::new(writer, Compression::default());
-        
-        let config_json = serde_json::to_string(&self.config)?;
-        encoder.write_all(config_json.as_bytes())?;
-        encoder.write_all(b"\n---WEIGHTS---\n")?;
-        
-        encoder.finish()?;
-        Ok(())
-    }
+    pub fn save(&self, path: &str) -> candle_core::Result<()> {
+    let file = File::create(path)?;
+    let writer = BufWriter::new(file);
+    let mut encoder = GzEncoder::new(writer, Compression::default());
     
-    pub fn load(path: &str, device: &Device) -> Result<Self> {
-        let file = File::open(path)?;
-        let reader = BufReader::new(file);
-        let mut decoder = GzDecoder::new(reader);
-        let mut contents = String::new();
-        decoder.read_to_string(&mut contents)?;
-        
-        let parts: Vec<&str> = contents.split("\n---WEIGHTS---\n").collect();
-        let config: ModelConfig = serde_json::from_str(parts[0])?;
-        
-        let varmap = VarMap::new();
-        let vb = VarBuilder::from_varmap(&varmap, DType::F32, device);
-        Self::new(config, vb, false)
-    }
+    let config_json = serde_json::to_string(&self.config).map_err(|e| candle_core::Error::from(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())))?;
+    encoder.write_all(config_json.as_bytes())?;
+    encoder.write_all(b"\n---WEIGHTS---\n")?;
+    
+    encoder.finish()?;
+    Ok(())
+}
+
+pub fn load(path: &str, device: &Device) -> candle_core::Result<Self> {
+    let file = File::open(path)?;
+    let reader = BufReader::new(file);
+    let mut decoder = GzDecoder::new(reader);
+    let mut contents = String::new();
+    decoder.read_to_string(&mut contents)?;
+    
+    let parts: Vec<&str> = contents.split("\n---WEIGHTS---\n").collect();
+    let config: ModelConfig = serde_json::from_str(parts[0]).map_err(|e| candle_core::Error::from(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())))?;
+    
+    let varmap = VarMap::new();
+    let vb = VarBuilder::from_varmap(&varmap, DType::F32, device);
+    Self::new(config, vb, false)
+}
     
     pub fn set_optimizer(&mut self, optimizer: AdamW) {
         *self.optimizer.lock().unwrap() = Some(optimizer);
@@ -843,7 +858,7 @@ impl ModelBuilder {
         self
     }
     
-    pub fn build(self) -> Result<BaseModel> {
+    pub fn build(self) -> candle_core::Result<BaseModel> {
         let varmap = VarMap::new();
         let vb = VarBuilder::from_varmap(&varmap, self.dtype, &self.device);
         let mut model = BaseModel::new(self.config, vb, self.gradient_checkpointing)?;
@@ -873,7 +888,7 @@ mod tests {
     use super::*;
     
     #[test]
-    fn test_model_creation() -> Result<()> {
+    fn test_model_creation() -> candle_core::Result<()> {
         let model = ModelBuilder::new()
             .with_config(ModelConfig {
                 num_hidden_layers: 2,
@@ -889,7 +904,7 @@ mod tests {
     }
     
     #[test]
-    fn test_forward_pass() -> Result<()> {
+    fn test_forward_pass() -> candle_core::Result<()> {
         let model = ModelBuilder::new()
             .with_config(ModelConfig {
                 num_hidden_layers: 2,

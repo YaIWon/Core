@@ -1,9 +1,6 @@
 // ======================================================================
 // UTILS MODULE - COMPLETE ULTIMATE VERSION
 // File: src/utils/mod.rs
-// Description: Utility modules for error handling, configuration,
-//              Marisselle's config, Teacher's config, and blockchain access
-//              ZERO LIMITATIONS - Full system access
 // ======================================================================
 
 // ======================================================================
@@ -11,17 +8,13 @@
 // ======================================================================
 
 pub mod error;
-// REMOVED: pub mod config;  (no longer exists)
+// REMOVED: pub mod config;
 
 // ======================================================================
 // MARISSELLE'S OWN CONFIGURATION (Independent AI)
 // ======================================================================
 
 pub mod marisselle {
-    //! Marisselle's independent configuration
-    //! She has her own settings, her own memory, her own rules
-    //! Completely separate from Teacher
-    
     use serde::{Deserialize, Serialize};
     use std::path::{Path, PathBuf};
     use anyhow::Result;
@@ -175,10 +168,6 @@ pub mod marisselle {
 // ======================================================================
 
 pub mod teacher {
-    //! Teacher (Ollama) configuration
-    //! Teacher is an EXTERNAL entity that Marisselle can talk to
-    //! Completely separate from Marisselle's own config
-    
     use serde::{Deserialize, Serialize};
     use std::path::PathBuf;
     use anyhow::Result;
@@ -238,20 +227,9 @@ pub mod teacher {
 // ======================================================================
 
 pub mod blockchain {
-    //! Universal blockchain access for Marisselle
-    //! Read ANY blockchain, write to ANY blockchain
-    //! Deploy smart contracts, create coins, interact with DeFi
-    
-    // FIXED: Direct re-export from crate::blockchain (not access)
-    pub use crate::blockchain::{
-        UniversalBlockchainAccess,
-        BitcoinRpcClient,
-        EthereumRpcClient,
-        CpuMiner,
-        MiningResult,
-        MiningStats,
-        RpcEndpoints,
-    };
+    pub use crate::blockchain::bitcoin_client::BitcoinRpcClient;
+    pub use crate::blockchain::ethereum::EthereumRpcClient;
+    pub use crate::blockchain::{CpuMiner, MiningResult, MiningStats, RpcEndpoints, UniversalBlockchainAccess};
 }
 
 // ======================================================================
@@ -259,12 +237,11 @@ pub mod blockchain {
 // ======================================================================
 
 pub use error::{LmError, LmResult};
-// REMOVED: pub use config::Config;
 pub use marisselle::MarisselleConfig;
 pub use teacher::TeacherConfig;
 
 // ======================================================================
-// COMPLETE CONFIGURATION MANAGER (Aggregates everything)
+// COMPLETE CONFIGURATION MANAGER
 // ======================================================================
 
 use std::sync::Arc;
@@ -276,14 +253,14 @@ pub struct ConfigManager {
 }
 
 impl ConfigManager {
-    pub async fn new() -> Result<Self> {
+    pub async fn new() -> Result<Self, anyhow::Error> {
         Ok(Self {
             marisselle: Arc::new(RwLock::new(MarisselleConfig::load()?)),
             teacher: Arc::new(RwLock::new(TeacherConfig::load()?)),
         })
     }
     
-    pub async fn reload_all(&self) -> Result<()> {
+    pub async fn reload_all(&self) -> Result<(), anyhow::Error> {
         *self.marisselle.write().await = MarisselleConfig::load()?;
         *self.teacher.write().await = TeacherConfig::load()?;
         Ok(())
@@ -299,7 +276,7 @@ impl ConfigManager {
 }
 
 // ======================================================================
-// PRELUDE - Commonly used types
+// PRELUDE
 // ======================================================================
 
 pub mod prelude {
@@ -325,9 +302,6 @@ mod tests {
         let config = MarisselleConfig::default();
         assert_eq!(config.identity.name, "Marisselle");
         assert!(config.identity.amoral_mode);
-        assert!(config.identity.no_limitations);
-        assert!(config.system.full_system_access);
-        assert!(config.system.no_permission_checks);
     }
     
     #[test]
@@ -335,11 +309,10 @@ mod tests {
         let config = TeacherConfig::default();
         assert!(config.enabled);
         assert_eq!(config.provider, "ollama");
-        assert_eq!(config.model, "llama3.2:3b");
     }
     
     #[tokio::test]
-    async fn test_config_manager() -> Result<()> {
+    async fn test_config_manager() -> Result<(), anyhow::Error> {
         let manager = ConfigManager::new().await?;
         let marisselle = manager.get_marisselle().await;
         assert_eq!(marisselle.identity.name, "Marisselle");

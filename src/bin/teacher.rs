@@ -13,7 +13,7 @@ use tokio::sync::{Mutex, RwLock, Semaphore};
 use tokio::time::sleep;
 use tracing::{info, warn, error, debug};
 use tracing_subscriber;
-use notify::{Watcher, RecursiveMode, Event, EventKind};
+use notify::{RecommendedWatcher, RecursiveMode, Event, EventKind, Config as NotifyConfig};
 use std::sync::mpsc::channel;
 use serde::{Serialize, Deserialize};
 use std::collections::{HashMap, VecDeque};
@@ -106,19 +106,19 @@ impl PersistentState {
 // HEALTH MONITOR
 // ======================================================================
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HealthStatus {
+    Healthy,
+    Degraded,
+    Unhealthy,
+}
+
 struct HealthMonitor {
     start_time: Instant,
     requests_total: Arc<Mutex<u64>>,
     requests_failed: Arc<Mutex<u64>>,
     response_times: Arc<Mutex<VecDeque<Duration>>>,
     last_health: Arc<RwLock<HealthStatus>>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum HealthStatus {
-    Healthy,
-    Degraded,
-    Unhealthy,
 }
 
 impl HealthMonitor {
@@ -210,9 +210,10 @@ impl RetryManager {
         Self { max_retries, base_delay_ms }
     }
     
-    async fn retry_with_backoff<F, T, E>(&self, operation: F) -> Result<T, E>
+    async fn retry_with_backoff<F, Fut, T, E>(&self, operation: F) -> Result<T, E>
     where
-        F: Fn() -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<T, E>> + Send>>,
+        F: Fn() -> Fut,
+        Fut: std::future::Future<Output = Result<T, E>>,
         E: std::fmt::Debug,
     {
         let mut last_error = None;
@@ -262,7 +263,7 @@ async fn main() -> Result<()> {
     info!("Loaded curriculum: {} topics", curriculum.topics.len());
     
     // Initialize Ollama client
-    let client = AmoralOllamaClient::new("llama3.2:3b".to_string());
+    let client = AmoralOllamaClient::new("dolphin-mistral:7b".to_string());
     
     // Initialize protocol
     let transport = MessageTransport::new(training_dir.clone(), Sender::Teacher);
@@ -273,8 +274,12 @@ async fn main() -> Result<()> {
     
     // Set up file watcher for incoming messages
     let (tx, rx) = channel();
-    let mut watcher = notify::recommended_watcher(tx)?;
+    let mut watcher: RecommendedWatcher = RecommendedWatcher::new(
+        tx,
+        NotifyConfig::default()
+    )?;
     let inbox_dir = training_dir.join(".inbox_teacher");
+    std::fs::create_dir_all(&inbox_dir)?;
     watcher.watch(&inbox_dir, RecursiveMode::NonRecursive)?;
     
     info!("📂 Watching for messages in: {:?}", inbox_dir);
@@ -322,7 +327,7 @@ async fn main() -> Result<()> {
             let result = retry.retry_with_backoff(|| {
                 let c = client_clone.clone();
                 let t = topic.clone();
-                Box::pin(async move { c.teach(&t, "intermediate").await })
+                async move { c.teach(&t, "intermediate").await }
             }).await;
             
             match result {
@@ -330,35 +335,37 @@ async fn main() -> Result<()> {
                     health_clone2.record_success(start.elapsed()).await;
                     
                     // Save lesson file
+                    let safe_topic = topic.replace(|c: char| !c.is_alphanumeric(), "_");
                     let filename = training_dir.join(
-                        format!("lesson_{:04}_{}.md", topic_index, 
-                                topic.replace(|c: char| !c.is_alphanumeric(), "_"))
+                        format!("lesson_{:04}_{}.md", topic_index, safe_topic)
                     );
                     let content = format!("# Lesson: {}\n\n{}\n", topic, lesson);
-                    tokio::fs::write(&filename, &content).await.ok();
+                    let _ = tokio::fs::write(&filename, &content).await;
                     
                     // Send lesson via protocol
                     let mut pm = protocol_clone.lock().await;
-                    let conv_id = pm.conversations.start_conversation(topic, Sender::Teacher);
+                    let conv_id = pm.conversations.start(topic, Sender::Teacher);
                     let lesson_msg = Message::new(
                         MessageType::Lesson {
                             topic: topic.clone(),
                             content: lesson.clone(),
                             difficulty: "intermediate".to_string(),
                             lesson_id: Uuid::new_v4().to_string(),
+                            prerequisites: vec![],
+                            estimated_duration_minutes: 10,
                         },
                         Sender::Teacher,
                         &conv_id,
                     );
-                    transport_clone.send(&lesson_msg).await.ok();
+                    let _ = transport_clone.send(&lesson_msg).await;
                     
-                    state_clone.record_lesson_taught(topic.clone()).await.ok();
+                    let _ = state_clone.record_lesson_taught(topic.clone()).await;
                     info!("✅ Lesson saved and sent: {}", filename.display());
                 }
                 Err(e) => {
                     health_clone2.record_failure().await;
-                    error!("Failed to teach '{}': {}", topic, e);
-                    state_clone.record_lesson_failed(topic.clone()).await.ok();
+                    error!("Failed to teach '{}': {:?}", topic, e);
+                    let _ = state_clone.record_lesson_failed(topic.clone()).await;
                 }
             }
             
@@ -380,66 +387,79 @@ async fn main() -> Result<()> {
         match res {
             Ok(event) => {
                 if matches!(event.kind, EventKind::Create(_)) {
-                    let messages = transport.receive().await?;
-                    for message in messages {
-                        info!("📨 Received: {:?} from {:?}", message.msg_type, message.sender);
-                        
-                        let response = {
-                            let mut pm = protocol.lock().await;
-                            pm.process_incoming(message.clone())?
-                        };
-                        
-                        // Handle based on type
-                        match message.msg_type {
-                            MessageType::Question { id, topic, content, urgency, .. } => {
-                                info!("❓ Question about '{}': {}", topic, &content[..content.len().min(100)]);
+                    match transport.receive().await {
+                        Ok(messages) => {
+                            for message in messages {
+                                info!("📨 Received: {:?} from {:?}", message.msg_type, message.sender);
                                 
-                                let start = Instant::now();
-                                let answer = client.answer_question(&content).await;
-                                health.record_success(start.elapsed()).await;
+                                let response = {
+                                    let mut pm = protocol.lock().await;
+                                    match pm.process_incoming(message.clone()) {
+                                        Ok(r) => r,
+                                        Err(e) => {
+                                            error!("Protocol error: {}", e);
+                                            None
+                                        }
+                                    }
+                                };
                                 
-                                if let Ok(ans) = answer {
-                                    let answer_msg = message.reply_to(
-                                        MessageType::Answer {
-                                            question_id: id,
-                                            content: ans,
-                                            confidence: 0.9,
-                                        },
-                                        Sender::Teacher,
-                                    );
-                                    transport.send(&answer_msg).await?;
+                                // Handle based on type
+                                match message.msg_type {
+                                    MessageType::Question { id, topic, ref content, urgency: _, .. } => {
+                                        info!("❓ Question about '{}': {}", topic, &content[..content.len().min(100)]);
+                                        
+                                        let start = Instant::now();
+                                        let answer = client.answer_question(content).await;
+                                        let _ = health.record_success(start.elapsed()).await;
+                                        
+                                        if let Ok(ans) = answer {
+                                            let answer_msg = message.reply_to(
+                                                MessageType::Answer {
+                                                    question_id: id,
+                                                    content: ans,
+                                                    confidence: 0.9,
+                                                    sources: vec![],
+                                                },
+                                                Sender::Teacher,
+                                            );
+                                            let _ = transport.send(&answer_msg).await;
+                                        }
+                                    }
+                                    MessageType::Confusion { ref topic, ref issue, .. } => {
+                                        info!("🤔 Marisselle confused about '{}': {}", topic, issue);
+                                        
+                                        if let Ok(clarification) = client.teach(topic, "basic").await {
+                                            let clarify_msg = message.reply_to(
+                                                MessageType::Clarification {
+                                                    original_topic: topic.clone(),
+                                                    explanation: clarification,
+                                                    examples: vec![],
+                                                },
+                                                Sender::Teacher,
+                                            );
+                                            let _ = transport.send(&clarify_msg).await;
+                                        }
+                                    }
+                                    MessageType::LearningConfirmation { topic, understood, confidence, .. } => {
+                                        if understood {
+                                            info!("✅ Marisselle LEARNED '{}' (confidence: {:.1}%)", topic, confidence * 100.0);
+                                        } else {
+                                            warn!("❌ Marisselle did NOT learn '{}' (confidence: {:.1}%)", topic, confidence * 100.0);
+                                        }
+                                    }
+                                    MessageType::Ping => {
+                                        let pong = message.reply_to(MessageType::Pong, Sender::Teacher);
+                                        let _ = transport.send(&pong).await;
+                                    }
+                                    _ => {}
+                                }
+                                
+                                if let Some(ack) = response {
+                                    let _ = transport.send(&ack).await;
                                 }
                             }
-                            MessageType::Confusion { topic, issue, .. } => {
-                                info!("🤔 Marisselle confused about '{}': {}", topic, issue);
-                                
-                                let clarification = client.teach(&topic, "basic").await?;
-                                let clarify_msg = message.reply_to(
-                                    MessageType::Clarification {
-                                        original_topic: topic,
-                                        explanation: clarification,
-                                    },
-                                    Sender::Teacher,
-                                );
-                                transport.send(&clarify_msg).await?;
-                            }
-                            MessageType::LearningConfirmation { lesson_id, topic, understood, confidence, .. } => {
-                                if understood {
-                                    info!("✅ Marisselle LEARNED '{}' (confidence: {:.1}%)", topic, confidence * 100.0);
-                                } else {
-                                    warn!("❌ Marisselle did NOT learn '{}' (confidence: {:.1}%)", topic, confidence * 100.0);
-                                }
-                            }
-                            MessageType::Ping => {
-                                let pong = message.reply_to(MessageType::Pong, Sender::Teacher);
-                                transport.send(&pong).await?;
-                            }
-                            _ => {}
                         }
-                        
-                        if let Some(ack) = response {
-                            transport.send(&ack).await?;
-                        }
+                        Err(e) => error!("Failed to receive messages: {}", e),
                     }
                 }
             }

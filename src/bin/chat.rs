@@ -43,7 +43,7 @@ pub struct ChatConfig {
     pub rag_max_tokens: usize,
     pub vector_store_path: PathBuf,
     pub blockchain_path: PathBuf,
-    // NEW: Mining configuration
+    // Mining configuration
     pub mining_enabled: bool,
     pub mine_on_chat: bool,
     pub mine_on_command: bool,
@@ -162,8 +162,8 @@ pub struct ChatApp {
     running: Arc<RwLock<bool>>,
     vector_store: Option<Arc<RwLock<VectorStore>>>,
     blockchain: Option<BlockchainManager>,
-    blockchain_access: Option<Arc<RwLock<UniversalBlockchainAccess>>>,  // NEW
-    total_blocks_mined: u64,  // NEW
+    blockchain_access: Option<Arc<RwLock<UniversalBlockchainAccess>>>,
+    total_blocks_mined: u64,
 }
 
 impl ChatApp {
@@ -203,7 +203,7 @@ impl ChatApp {
             min_p: None,
             seed: None,
         };
-        let generator = Generator::new(model.clone(), sampling);
+        let mut generator = Generator::new(model.clone(), sampling);
         
         let conversation = Arc::new(RwLock::new(ConversationManager::new(config.max_context_length)));
         
@@ -215,10 +215,9 @@ impl ChatApp {
         
         let blockchain = Some(BlockchainManager::new(config.blockchain_path.clone()).await?);
         
-        // NEW: Initialize blockchain access for mining
         let blockchain_access = if config.mining_enabled {
             let mut access = UniversalBlockchainAccess::new();
-            access.init_ethereum("https://cloudflare-eth.com", 1);
+            access.init_ethereum();
             access.start_mining();
             info!("⛏️ Blockchain mining initialized");
             Some(Arc::new(RwLock::new(access)))
@@ -255,7 +254,7 @@ impl ChatApp {
         // Start mining stats reporter
         let mining_access = self.blockchain_access.clone();
         if let Some(access) = mining_access {
-            let stats_logger = tokio::spawn(async move {
+            tokio::spawn(async move {
                 let mut interval = tokio::time::interval(Duration::from_secs(30));
                 loop {
                     interval.tick().await;
@@ -310,7 +309,7 @@ impl ChatApp {
             info!("Generating response...");
             let start = Instant::now();
             
-            let generate_future = self.generator.generate_with_prompt(&prompt, self.config.max_response_tokens);
+            let generate_future = self.generator.generate(&prompt);
             let response_result = timeout(
                 Duration::from_secs(self.config.generation_timeout_secs),
                 generate_future,
@@ -328,7 +327,6 @@ impl ChatApp {
                     
                     println!("\n{}\n", response);
                     
-                    // NEW: Mine a block for this conversation exchange
                     if self.config.mining_enabled && self.config.mine_on_chat {
                         self.mine_conversation_block(&sanitized, &response).await;
                     }
@@ -344,7 +342,6 @@ impl ChatApp {
             }
         }
         
-        // Print final mining stats
         if self.config.mining_enabled {
             if let Some(access) = &self.blockchain_access {
                 let stats = access.read().await.get_mining_stats();
@@ -358,7 +355,6 @@ impl ChatApp {
         Ok(())
     }
     
-    // NEW: Mine a block for a conversation exchange
     async fn mine_conversation_block(&mut self, user_input: &str, assistant_response: &str) {
         let conv_hash = {
             let conv = self.conversation.read().await;
@@ -379,7 +375,6 @@ impl ChatApp {
                 info!("   Nonce: {}", result.nonce);
                 info!("   Time: {}ms", result.duration_ms);
                 
-                // Log to console for user visibility
                 println!("\n💎 Mined block for this conversation!");
                 println!("   Hash: {}...", &result.hash[..16]);
                 println!("   Nonce: {}\n", result.nonce);
@@ -456,7 +451,6 @@ impl ChatApp {
                     println!("\n[Blockchain verification: {}]\n", if valid { "PASSED" } else { "FAILED" });
                 }
             }
-            // NEW: Mining commands
             "/mine" => {
                 if let Some(access) = &self.blockchain_access {
                     let stats = access.read().await.get_mining_stats();

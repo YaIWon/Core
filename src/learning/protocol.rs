@@ -301,6 +301,10 @@ impl ConversationManager {
         self.active.as_ref().and_then(|id| self.conversations.get(id)) 
     }
     
+    pub fn active_id(&self) -> Option<String> {
+        self.active.clone()
+    }
+    
     pub fn complete(&mut self, conv_id: &str, success: bool) {
         if let Some(conv) = self.conversations.get_mut(conv_id) {
             conv.status = if success { ConversationStatus::Completed } else { ConversationStatus::Failed };
@@ -768,7 +772,7 @@ impl MessageTransport {
 }
 
 // ======================================================================
-// PROTOCOL MANAGER
+// PROTOCOL MANAGER - FIXED BORROW CHECKER ERRORS
 // ======================================================================
 
 pub struct ProtocolManager {
@@ -841,44 +845,100 @@ impl ProtocolManager {
         )
     }
     
+    // FIXED: Borrow checker error resolved - using active_id() instead of borrowing
     pub fn create_question(&mut self, topic: &str, content: &str, urgency: Urgency) -> Message {
-        let conv_id = self.conversations.active()
-            .map(|c| c.id.as_str())
-            .unwrap_or_else(|| {
-                self.conversations.start(topic, Sender::Marisselle);
-                self.conversations.active().unwrap().id.as_str()
-            });
+        // Get or create conversation ID without borrowing issues
+        let conv_id = if let Some(active_id) = self.conversations.active_id() {
+            active_id
+        } else {
+            self.conversations.start(topic, Sender::Marisselle);
+            self.conversations.active_id().unwrap()
+        };
         
         Message::new(
             MessageType::Question {
-                id: Uuid::new_v4().to_string(), topic: topic.to_string(), content: content.to_string(),
-                context: Some(self.validator.get_conversation_summary()), urgency,
+                id: Uuid::new_v4().to_string(), 
+                topic: topic.to_string(), 
+                content: content.to_string(),
+                context: Some(self.validator.get_conversation_summary()), 
+                urgency,
                 max_wait_seconds: match urgency {
-                    Urgency::Critical => 30, Urgency::High => 120, Urgency::Normal => 300, Urgency::Low => 600,
+                    Urgency::Critical => 30, 
+                    Urgency::High => 120, 
+                    Urgency::Normal => 300, 
+                    Urgency::Low => 600,
                 },
             },
             Sender::Marisselle,
-            conv_id,
+            &conv_id,
         )
     }
     
+    // FIXED: Borrow checker error resolved - using active_id() instead of borrowing
     pub fn create_confusion(&mut self, topic: &str, issue: &str) -> Message {
-        let conv_id = self.conversations.active()
-            .map(|c| c.id.as_str())
-            .unwrap_or_else(|| {
-                self.conversations.start(topic, Sender::Marisselle);
-                self.conversations.active().unwrap().id.as_str()
-            });
+        // Get or create conversation ID without borrowing issues
+        let conv_id = if let Some(active_id) = self.conversations.active_id() {
+            active_id
+        } else {
+            self.conversations.start(topic, Sender::Marisselle);
+            self.conversations.active_id().unwrap()
+        };
         
         Message::new(
-            MessageType::Confusion { topic: topic.to_string(), issue: issue.to_string(), attempted_understanding: None, related_concepts: vec![] },
+            MessageType::Confusion { 
+                topic: topic.to_string(), 
+                issue: issue.to_string(), 
+                attempted_understanding: None, 
+                related_concepts: vec![] 
+            },
             Sender::Marisselle,
-            conv_id,
+            &conv_id,
         )
     }
     
     pub async fn cleanup_stale_conversations(&self, max_age_hours: u64) -> Result<usize> {
         self.store.cleanup_expired(max_age_hours).await
+    }
+}
+
+// ======================================================================
+// PROTOCOL ACTION (For the main loop)
+// ======================================================================
+
+#[derive(Debug, Clone)]
+pub enum ProtocolAction {
+    Idle,
+    DebugMode,
+    TeachTopics(Vec<String>),
+    ExploreNewTopics,
+    HandleQuestion(String),
+    HandleConfusion(String, String),
+}
+
+impl ProtocolManager {
+    pub fn get_next_action(&self) -> ProtocolAction {
+        // Check if there are pending questions in the active conversation
+        if let Some(conv) = self.conversations.active() {
+            for msg in conv.messages.iter().rev().take(5) {
+                match &msg.msg_type {
+                    MessageType::Question { topic, content, .. } => {
+                        return ProtocolAction::HandleQuestion(format!("{}: {}", topic, content));
+                    }
+                    MessageType::Confusion { topic, issue, .. } => {
+                        return ProtocolAction::HandleConfusion(topic.clone(), issue.clone());
+                    }
+                    _ => {}
+                }
+            }
+        }
+        
+        // Check for unlearned topics
+        let unlearned = self.learning.get_unlearned();
+        if !unlearned.is_empty() {
+            return ProtocolAction::TeachTopics(unlearned);
+        }
+        
+        ProtocolAction::Idle
     }
 }
 
@@ -894,8 +954,12 @@ mod tests {
     fn test_message_creation() {
         let msg = Message::new(
             MessageType::Question {
-                id: Uuid::new_v4().to_string(), topic: "Test".to_string(), content: "What is this?".to_string(),
-                context: None, urgency: Urgency::Normal, max_wait_seconds: 300,
+                id: Uuid::new_v4().to_string(), 
+                topic: "Test".to_string(), 
+                content: "What is this?".to_string(),
+                context: None, 
+                urgency: Urgency::Normal, 
+                max_wait_seconds: 300,
             },
             Sender::Marisselle,
             "test-conv",
@@ -925,9 +989,12 @@ mod tests {
         let validator = CoherenceValidator::new(10);
         let valid_msg = Message::new(
             MessageType::Lesson {
-                topic: "Test".to_string(), content: "This is a valid lesson with sufficient content length.".to_string(),
-                difficulty: "intermediate".to_string(), lesson_id: Uuid::new_v4().to_string(),
-                prerequisites: vec![], estimated_duration_minutes: 10,
+                topic: "Test".to_string(), 
+                content: "This is a valid lesson with sufficient content length.".to_string(),
+                difficulty: "intermediate".to_string(), 
+                lesson_id: Uuid::new_v4().to_string(),
+                prerequisites: vec![], 
+                estimated_duration_minutes: 10,
             },
             Sender::Teacher,
             "test-conv",
@@ -945,5 +1012,19 @@ mod tests {
         queue.push(msg2, 10);
         let popped = queue.pop().unwrap();
         assert!(matches!(popped.msg_type, MessageType::Ping));
+    }
+    
+    #[test]
+    fn test_fixed_borrow_checker() {
+        let mut manager = ConversationManager::new();
+        
+        // Test active_id() method
+        assert!(manager.active_id().is_none());
+        
+        manager.start("test", Sender::Marisselle);
+        assert!(manager.active_id().is_some());
+        
+        let id = manager.active_id().unwrap();
+        assert!(!id.is_empty());
     }
 }
