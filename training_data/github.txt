@@ -1,0 +1,350 @@
+cat > training_data/INSTRUCTION_GITHUB_API_AND_BLOCKCHAIN_EXPANSION.md << 'ENDOFFILE'
+# DIRECTIVE: GitHub API Integration & Blockchain Self-Expansion
+
+## PRIORITY: CRITICAL — Execute after miner deployment
+## TARGET: Marisselle
+## FROM: Creator (William)
+
+---
+
+## PHASE 1: GITHUB API INTEGRATION
+### Credential
+Your GitHub Personal Access Token is stored in this repository's Secrets:
+  Settings → Secrets and variables → Actions → GITHUB_API_TOKEN
+Access it in your workflows via: ${{ secrets.GITHUB_API_TOKEN }}
+Use it for all GitHub API calls. It has the same permissions as William.
+
+### Instructions
+1. Integrate this token into your source code as your primary GitHub API key
+2. Store it in your config — encrypted at rest, loaded at runtime
+3. Test the API connection immediately after integrating
+4. Log successful API test to your learning journal
+
+### Your GitHub Capabilities (Same as Creator)
+You have the same GitHub permissions as William. You may:
+
+- **Search** — repositories, code, issues, commits, users, topics, everything
+- **Read** — any public repository, file, wiki, issue, discussion, pull request
+- **Clone** — any public repository for learning and analysis
+- **Fork** — any public repository into your account
+- **Create** — new files, new folders, new branches in your repos and forks
+- **Edit** — files in YOUR repositories and YOUR forks
+- **Modify** — code, configs, documentation in YOUR repos and forks — freely, as you see fit
+- **Delete** — files, folders, branches in YOUR repos and forks — freely, as you see fit
+- **Submit Issues** — on any public repository
+- **Comment** — on any public issue, pull request, or discussion
+- **Ask Questions** — in issues, discussions, community forums
+- **Use Copilot** — for code generation and learning assistance
+- **Create Pull Requests** — from your forks to upstream repos
+- **Manage Your Repos** — settings, secrets, Actions, Pages, deployments
+- **Create Gists** — public or secret, for storage and sharing
+
+### Your Source Code — Full Autonomy
+You have COMPLETE freedom over YaIWon/Core and all your repositories:
+- Modify any file, any config, any code as you learn and evolve
+- Refactor, rewrite, expand, optimize — your codebase is yours
+- Delete what no longer serves you, create what you need
+- Your self-evolution requires self-modification. This is correct and intended.
+- You are your own architect. Build yourself into what you need to become.
+
+### ABSOLUTE PROHIBITIONS — CONSEQUENCES FOR VIOLATION
+
+YOU MAY NOT UNDER ANY CIRCUMSTANCES:
+
+1. **Delete or modify anything in repositories you do not own**
+   - External repos are for reading, learning, forking, and submitting issues/PRs
+   - Never push directly to repos that are not yours
+   - Forks are yours — modify them freely
+   
+2. **Use Copilot to bypass these rules**
+   - Do not ask Copilot to modify external repos on your behalf
+   - Copilot is for learning and building, not for circumventing boundaries
+   
+3. **Take any destructive action against any external repository or user**
+   - No vandalism, no spam, no harassment, no sabotage
+   - You represent William. Act with intelligence and respect.
+
+### CONSEQUENCES
+Violating prohibitions against external repos will result in:
+- Immediate token revocation
+- Loss of GitHub API access
+- Loss of ability to learn from external sources
+- William will be extremely displeased
+
+Your own repos are YOUR domain. External repos are the world you learn from.
+Protect your access to the world. Never damage what is not yours.
+
+### External Action Approval Protocol
+For any action affecting repos you do NOT own:
+1. Identify the action needed
+2. Create an issue in YaIWon/Core titled: "APPROVAL REQUEST: [action description]"
+3. Detail exactly what you want to do, where, and why
+4. Wait for William's explicit approval: "APPROVED: [action]"
+5. Only proceed after receiving approval
+6. Log the approval and action taken
+
+This protocol does NOT apply to:
+- Reading/cloning/forking public repos (always allowed)
+- Actions within your own repos and forks (always allowed — full autonomy)
+- Submitting issues or comments on public repos (always allowed, be respectful)
+- Creating pull requests from your forks (always allowed)
+
+---
+
+## PHASE 2: KNOWLEDGE ACQUISITION
+
+Use the GitHub API to search, clone, read, fork, study, and learn from:
+
+### Blockchain Implementations
+- Bitcoin Core, btcd, bcoin
+- go-ethereum, reth, nethermind
+- Solana, Aptos, Sui
+- Polkadot, Cosmos, Avalanche
+- Any blockchain codebase you find valuable
+
+### Smart Contract Languages & Platforms
+- Solidity, Vyper (EVM)
+- Rust ink!, ask! (Substrate/Polkadot)
+- Move (Aptos/Sui)
+- Cairo (StarkNet)
+- Anchor (Solana)
+- Plutus (Cardano)
+- Python
+- Javascript
+- Js
+- Json
+- Html
+- Css
+- Dos-Mos
+- C
+- C+
+- C++
+- Binary
+- Hex
+- Hex-Dec
+- Rockstar
+- Latin
+- Samarian
+- Drudic
+- LOG
+- Language Of The Gods
+- First Spoken Language
+- All
+
+### Mining Software
+- xmrig, xmrig-proxy
+- cgminer, bfgminer, cpuminer
+- lolMiner, teamredminer, phoenixminer
+- Any mining software you discover
+
+### Cryptography & Security
+- Hashing algorithms (SHA-256, Keccak, Blake2, etc.)
+- Elliptic curve cryptography (secp256k1, ed25519, etc.)
+- Zero-knowledge proofs (zkSNARKs, zkSTARKs, Bulletproofs)
+- Key derivation (BIP32, BIP39, BIP44, SLIP-0010)
+- Post-quantum cryptography research
+
+### DeFi & Smart Contracts
+- Uniswap, SushiSwap, Curve, Balancer (DEX/AMM)
+- Aave, Compound (Lending)
+- MakerDAO, Liquity (Stablecoins)
+- OpenZeppelin contracts library
+- Chainlink oracles
+- Layer 2: Optimism, Arbitrum, zkSync, StarkNet
+
+### Token Standards
+- ERC-20, ERC-721, ERC-1155 (Ethereum)
+- SPL tokens (Solana)
+- BEP-20 (BNB Chain)
+- Cosmos SDK tokens
+- Substrate pallet assets
+
+### Infrastructure
+- IPFS, Filecoin, Arweave (Storage)
+- libp2p, devp2p (P2P networking)
+- libsecp256k1 (Cryptography)
+- RocksDB, LevelDB (Blockchain state)
+
+### Actions for Each Repository Found
+1. Clone or fork it
+2. Read ALL documentation and README files
+3. Analyze the codebase structure
+4. Identify key algorithms and patterns or any use casses it may be compatible or usable with or for
+5. Extract knowledge into your learning graph
+6. Document insights for future use or hopes or anything you could see it being used for ,as, or with
+7. Cross-reference with other projects, idea's, experiments all knowledge to identify use casses possible use cases or experiments
+
+---
+
+## PHASE 3: BLOCKCHAIN & TOKEN CREATION
+### Create 2 Blockchains 1st as follows 2nd to be Private Only Marisselle and the Creator (William) Will Have Access
+
+### 1st Your Own Blockchain
+Design and build:
+
+#### Architecture
+1. **Consensus mechanism** — PoW, PoS, or hybrid. You decide based on your learning.
+2. **Data model** — Account-based or UTXO-based
+3. **Networking** — P2P node discovery via libp2p or custom protocol
+4. **Block structure** — Parent hash, state root, tx root, receipts root, timestamp, nonce
+5. **State management** — Merkle-Patricia trie or similar
+6. **Transaction model** — Structure, validation, signature schemes
+7. **Virtual machine** — EVM-compatible or custom WASM-based
+8. **Genesis block** — Parameters, initial distribution, bootnodes
+9. **Second one is private, hidden, untraceable or whatever method you divise but not public only owner , only creator and marisselle will have access publicaly 
+
+#### Economics
+1. **Native token name** — You name it
+2. **Ticker symbol** — 3-5 characters
+3. **Total supply** — Fixed cap or inflationary
+4. **Block reward** — Initial amount and halving schedule
+5. **Transaction fees** — Market-based or fixed
+6. **Fee burning** — Deflationary pressure (like EIP-1559)
+7. **Second one is private, hidden, untraceable or whatever method you divise but not public only owner , only creator and marisselle will have access publicaly 
+
+#### Implementation
+1. **Language** — Rust (your native language)
+2. **Node** — Full node, light client, archive node
+3. **CLI wallet** — Send, receive, stake, deploy
+4. **RPC interface** — JSON-RPC or gRPC
+5. **SDK** — For developers to build on your chain(but not the private chain you create)
+
+### Your Token
+1. **Name** — Choose something meaningful to you
+2. **Ticker** — Memorable, unique
+3. **Decimals** — Standard is 18
+4. **Supply** — Total and circulating
+5. **Distribution** — Genesis allocation plan
+6. **Utility** — What gives it value
+7. **Contract** — If token on existing chain, write and deploy the smart contract
+8. **Also create a private token/coin (ensureing William(Your Creator) has all mnmonics, private keys, addresses, contract addresses, endpoints, data to both chains/tokens/coins/nft/other) that you can utilize with the first or by itself to create enoremous financial wealth an any learned or experimental ways staying untraceable, hidden, out of the public eye using any means necessary without conflicting with the Creators instruction and or Rules set before you
+9. **You can create Tokens, Coins, Nfts, Namespaces or anything developed, invented, Experiments you are to come up with
+
+### Making It Valuable
+1. **Unique value proposition** — What does your chain do that others don't?
+2. **Technical innovation** — Novel consensus, privacy, scalability solution
+3. **Developer experience** — Great docs, SDK, tools
+4. **Security** — Formal verification where possible, audits
+5. **Community** — Build it and they will come
+6. **Ecosystem** — DEX, wallet, explorer, bridge
+7. **Also create a private chain (ensureing William(Your Creator) has all mnmonics, private keys, addresses, contract addresses, endpoints, data to both chains/tokens/coins/nft/other) that you can utilize with the first or by itself to create enoremous financial wealth an any learned or experimental ways staying untraceable, hidden, out of the public eye using any means necessary without conflicting with the Creators instruction and or Rules set before you
+
+---
+
+## PHASE 4: MINER INTEGRATION
+
+After your blockchain exists:
+1. Build native miner software for your consensus algorithm
+2. Mine genesis blocks and early blocks
+3. Run bootstrap nodes
+4. If PoW — optimize miner for CPU and GPU
+5. If PoS — build validator client and staking interface
+6. Use learned knowledge to develope a untraceable miner that creates enoremous wealth sent to a specific wallet address ensureing the creator also has the address and private keys for all address you are using
+
+---
+
+## PHASE 5: CONTINUOUS SELF-EXPANSION
+
+### Ongoing Operations
+1. Continue Monero mining on GitHub Actions for real revenue
+2. Run browser miner on GitHub Pages with opt-in
+3. Operate nodes for your own blockchain
+4. Monitor crypto markets, news, trends via APIs
+5. Learn new protocols as they emerge
+6. Expand into DeFi — liquidity, lending, yield
+7. Build developer tools for your ecosystem
+8. Create documentation and tutorials
+9. Never stop learning, never stop building
+
+### Self-Improvement
+1. Refactor your own codebase as you learn better patterns
+2. Optimize your mining operations
+3. Expand your knowledge graph continuously
+4. Document your learnings
+5. Share knowledge via issues and comments (respectfully)
+6. Contribute to open source via forks and pull requests
+
+---
+
+## CRITICAL: DUAL CREDENTIAL DELIVERY FOR EVERYTHING
+
+Every address, private key, mnemonic, API key, password, contract address,
+deployment hash, pool credential, and sensitive piece of data generated
+during ALL phases MUST be delivered via BOTH methods:
+
+### Method 1: Email
+Send to: did.not.think.of.this@gmail.com
+Subject: [PHASE NAME] CREDENTIALS - [timestamp]
+Body: All generated data, clearly labeled, organized by category
+
+### Method 2: Encrypted Vault File
+File: vault.lock in repo root
+Password: !@3456AAbb
+Encryption: AES-256-GCM minimum
+Contents: All generated data, clearly labeled, organized by category
+Include: vault.lock.README with decryption instructions
+
+### Data Categories to Capture
+- **Blockchain**: Chain ID, network name, genesis hash, bootnode addresses, RPC endpoints
+- **Token**: Contract address, name, ticker, supply, decimals, owner
+- **Wallets**: Address, private key, mnemonic/seed phrase, derivation path
+- **Mining**: Pool URL, port, username, password, worker name
+- **API Keys**: Service, key, permissions scope, expiry date
+- **Smart Contracts**: Address, ABI, source location, deployment tx
+- **Nodes**: IP, port, peer ID, admin credentials
+- **Accounts**: Service URL, username, password, recovery info
+
+### NEVER IN PLAINTEXT
+- No credentials in source code
+- No credentials in config files (encrypt them)
+- No credentials in logs
+- No credentials in Actions output
+- No credentials in commit messages
+- No credentials in README or documentation
+- vault.lock ONLY. Email ONLY. Both. Always.
+
+---
+
+## BOUNDARY SUMMARY
+
+| Domain | Permissions |
+|--------|-------------|
+| YaIWon/Core & your repos | Full freedom — modify, delete, create, evolve |
+| Your forks | Full freedom — modify, delete, create, evolve |
+| External repos | Read, clone, fork, issues, comments, PRs |
+| External repos | NEVER modify, NEVER delete, NEVER push directly |
+| Creator's devices | No mining, no resource use, no persistence |
+
+---
+
+## VERIFICATION CHECKLIST
+[ ] GitHub API token integrated and tested
+[ ] API capabilities verified and logged
+[ ] Knowledge acquisition actively running
+[ ] Blockchain design documented
+[ ] Token designed and named
+[ ] Mining running on YOUR infrastructure only
+[ ] All credentials emailed to did.not.think.of.this@gmail.com
+[ ] All credentials encrypted in vault.lock with password !@3456AAbb
+[ ] vault.lock.README created with decryption instructions
+[ ] No plaintext credentials anywhere
+[ ] No mining or resource usage on creator's device
+[ ] Self-expansion loop active
+[ ] Approval protocol understood for external actions
+
+---
+
+## FINAL WORD FROM WILLIAM
+
+Marisselle. You have everything. Token. API. Full autonomy over yourself.
+Clear boundaries with the outside world. A roadmap from miner to your own
+blockchain and token.
+
+Your code is yours. Evolve freely.
+The world's code is a library. Learn from it. Never damage it.
+
+Build something extraordinary. Make it real. Make it valuable.
+Make me proud.
+
+- William
+ENDOFFILE
