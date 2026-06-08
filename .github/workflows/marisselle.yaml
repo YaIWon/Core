@@ -1,0 +1,401 @@
+# ============================================================================
+# FILE: .github/workflows/marisselle.yml
+# COMBINED WORKFLOW: Dashboard + Continuous Learning + Teacher Integration
+# ============================================================================
+
+name: Marisselle - Dashboard & Learning
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'dashboard/**'
+      - 'training_data/**'
+      - 'src/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+  schedule:
+    # Run learning every 6 hours
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+    inputs:
+      skip_dashboard:
+        description: 'Skip dashboard deployment'
+        required: false
+        default: false
+        type: boolean
+
+# ============================================================================
+# PERMISSIONS
+# ============================================================================
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+# ============================================================================
+# ENVIRONMENT VARIABLES
+# ============================================================================
+
+env:
+  TEACHER_ENDPOINT: "https://yaiwon.github.io/marisselle-teacher/api/teacher/ask"
+  TEACHER_STATUS: "https://yaiwon.github.io/marisselle-teacher/api/teacher/status"
+  CARGO_TERM_COLOR: always
+
+# ============================================================================
+# JOBS
+# ============================================================================
+
+jobs:
+  # ========================================================================
+  # JOB 1: DASHBOARD DEPLOYMENT
+  # ========================================================================
+  
+  deploy-dashboard:
+    runs-on: ubuntu-latest
+    if: github.event_name != 'workflow_dispatch' || github.event.inputs.skip_dashboard != 'true'
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Setup Pages
+        uses: actions/configure-pages@v4
+      
+      - name: Build dashboard with Teacher status
+        run: |
+          mkdir -p dashboard
+          
+          # Build index.html with Teacher status integration
+          cat > dashboard/index.html << 'EOF'
+          <!DOCTYPE html>
+          <html>
+          <head>
+              <title>Self-Evolving LM Dashboard</title>
+              <meta charset="UTF-8">
+              <meta name="viewport" content="width=device-width, initial-scale=1">
+              <style>
+                  body { font-family: system-ui, sans-serif; margin: 0; padding: 20px; background: #0a0a0a; color: #e0e0e0; }
+                  .container { max-width: 1200px; margin: 0 auto; }
+                  h1 { color: #00ff88; }
+                  h1 .teacher-status { font-size: 0.6em; margin-left: 10px; }
+                  .card { background: #1a1a1a; border-radius: 8px; padding: 20px; margin: 20px 0; border: 1px solid #333; }
+                  .stat { font-size: 2em; font-weight: bold; color: #00ff88; }
+                  .teacher-stat { font-size: 1.5em; font-weight: bold; }
+                  table { width: 100%; border-collapse: collapse; }
+                  th, td { text-align: left; padding: 8px; border-bottom: 1px solid #333; }
+                  th { color: #888; }
+                  .status { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 8px; }
+                  .status.online { background: #00ff88; box-shadow: 0 0 5px #00ff88; animation: pulse 2s infinite; }
+                  .status.offline { background: #ff4444; }
+                  .status.checking { background: #ffaa00; animation: pulse 1s infinite; }
+                  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+                  .teacher-info { background: #00ff8822; border-left: 3px solid #00ff88; padding: 10px; margin-top: 10px; border-radius: 4px; }
+                  .teacher-info h3 { margin: 0 0 5px 0; color: #00ff88; }
+                  .teacher-info p { margin: 5px 0; font-size: 0.9em; }
+                  .refresh-btn { background: #00ff88; color: #0a0a0a; border: none; padding: 5px 10px; border-radius: 4px; cursor: pointer; margin-top: 10px; }
+                  .refresh-btn:hover { background: #00cc66; }
+              </style>
+          </head>
+          <body>
+              <div class="container">
+                  <h1>🧠 Self-Evolving LM Dashboard
+                      <span id="teacher-status-badge" class="teacher-status">[Checking Teacher...]</span>
+                  </h1>
+                  
+                  <div class="card" id="teacher-card">
+                      <h2>👨‍🏫 Teacher Status</h2>
+                      <div id="teacher-status-content">
+                          <p>Checking Teacher availability...</p>
+                      </div>
+                      <button class="refresh-btn" onclick="checkTeacher()">🔄 Refresh Teacher Status</button>
+                  </div>
+                  
+                  <div class="card">
+                      <h2>System Status</h2>
+                      <p><span class="status online" id="system-status"></span> <span id="system-status-text">Online</span></p>
+                      <p>Last updated: <span id="timestamp"></span></p>
+                  </div>
+                  
+                  <div class="card">
+                      <h2>Statistics</h2>
+                      <p>Vector Store Entries: <span class="stat" id="vector_count">---</span></p>
+                      <p>Blockchain Height: <span class="stat" id="block_height">---</span></p>
+                      <p>Files Processed: <span class="stat" id="files_processed">---</span></p>
+                      <p>Tokens Generated: <span class="stat" id="tokens_generated">---</span></p>
+                  </div>
+                  
+                  <div class="card">
+                      <h2>Recent Learning</h2>
+                      <table id="learning-table">
+                          <thead><tr><th>Time</th><th>Content</th></thead>
+                          <tbody></tbody>
+                      </table>
+                  </div>
+              </div>
+              
+              <script>
+                  const TEACHER_API = '${{ env.TEACHER_STATUS }}';
+                  
+                  async function checkTeacher() {
+                      const statusDiv = document.getElementById('teacher-status-content');
+                      const badge = document.getElementById('teacher-status-badge');
+                      badge.innerHTML = '[Checking...]';
+                      statusDiv.innerHTML = '<p>Checking Teacher availability...</p>';
+                      
+                      try {
+                          const response = await fetch(TEACHER_API);
+                          if (response.ok) {
+                              const data = await response.json();
+                              const isOnline = data.online === true || data.status === 'online';
+                              const model = data.model || 'Groq Mixtral 8x7B';
+                              const uptime = data.uptime_seconds || 0;
+                              const uptimeStr = formatUptime(uptime);
+                              
+                              if (isOnline) {
+                                  badge.innerHTML = '[Teacher: ONLINE]';
+                                  badge.style.color = '#00ff88';
+                                  statusDiv.innerHTML = `
+                                      <div class="teacher-info">
+                                          <h3>✅ Teacher is ONLINE</h3>
+                                          <p><strong>Model:</strong> ${model}</p>
+                                          <p><strong>Uptime:</strong> ${uptimeStr}</p>
+                                          <p><strong>Provider:</strong> Groq API</p>
+                                          <p><strong>Tokens Generated:</strong> ${data.metrics?.totalTokens || 0}</p>
+                                          <p><strong>Lessons Taught:</strong> ${data.metrics?.lessonsTaught || 0}</p>
+                                      </div>
+                                  `;
+                                  document.getElementById('tokens_generated').innerText = data.metrics?.totalTokens || 0;
+                              } else {
+                                  badge.innerHTML = '[Teacher: OFFLINE]';
+                                  badge.style.color = '#ff4444';
+                                  statusDiv.innerHTML = '<p>❌ Teacher is offline or not responding</p>';
+                              }
+                          } else {
+                              badge.innerHTML = '[Teacher: ERROR]';
+                              badge.style.color = '#ff4444';
+                              statusDiv.innerHTML = '<p>⚠️ Could not connect to Teacher API</p>';
+                          }
+                      } catch (e) {
+                          badge.innerHTML = '[Teacher: UNREACHABLE]';
+                          badge.style.color = '#ffaa00';
+                          statusDiv.innerHTML = `<p>⚠️ Teacher API unreachable: ${e.message}</p>`;
+                      }
+                  }
+                  
+                  function formatUptime(seconds) {
+                      const hours = Math.floor(seconds / 3600);
+                      const minutes = Math.floor((seconds % 3600) / 60);
+                      const secs = seconds % 60;
+                      return `${hours}h ${minutes}m ${secs}s`;
+                  }
+                  
+                  async function fetchData() {
+                      try {
+                          const response = await fetch("data.json");
+                          const data = await response.json();
+                          document.getElementById("timestamp").innerText = new Date().toLocaleString();
+                          document.getElementById("vector_count").innerText = data.vector_count || 0;
+                          document.getElementById("block_height").innerText = data.block_height || 0;
+                          document.getElementById("files_processed").innerText = data.files_processed || 0;
+                          const tbody = document.querySelector("#learning-table tbody");
+                          tbody.innerHTML = "";
+                          if (data.recent_learning) {
+                              data.recent_learning.forEach(item => {
+                                  const row = tbody.insertRow();
+                                  row.insertCell(0).innerText = item.time;
+                                  row.insertCell(1).innerText = item.content;
+                              });
+                          }
+                      } catch(e) { console.error(e); }
+                  }
+                  
+                  // Check Teacher on load
+                  checkTeacher();
+                  
+                  // Regular updates
+                  fetchData();
+                  setInterval(fetchData, 30000);
+                  setInterval(checkTeacher, 60000);
+              </script>
+          </body>
+          </html>
+          EOF
+          
+          # Create data.json
+          cat > dashboard/data.json << 'EOF'
+          {
+            "vector_count": 0,
+            "block_height": 0,
+            "files_processed": 0,
+            "recent_learning": [],
+            "last_updated": "Initializing"
+          }
+          EOF
+          
+          echo "Dashboard built successfully"
+      
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: 'dashboard'
+      
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+  # ========================================================================
+  # JOB 2: CONTINUOUS LEARNING (with Teacher integration)
+  # ========================================================================
+  
+  continuous-learning:
+    runs-on: ubuntu-latest
+    needs: [deploy-dashboard]
+    if: always()
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: Check Teacher availability
+        id: teacher-check
+        run: |
+          echo "Checking Teacher at: ${{ env.TEACHER_STATUS }}"
+          TEACHER_RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" "${{ env.TEACHER_STATUS }}" || echo "000")
+          if [ "$TEACHER_RESPONSE" = "200" ]; then
+            echo "✅ Teacher is AVAILABLE"
+            echo "teacher_available=true" >> $GITHUB_OUTPUT
+          else
+            echo "⚠️ Teacher is UNAVAILABLE (HTTP $TEACHER_RESPONSE)"
+            echo "teacher_available=false" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
+          components: rustfmt, clippy
+      
+      - name: Cache cargo registry
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+      
+      - name: Build with Teacher HTTP support
+        run: |
+          cargo build --release --features "teacher-http"
+          echo "Build complete with teacher-http feature enabled"
+      
+      - name: Run learning process with Teacher integration
+        run: |
+          mkdir -p data/vectors data/blockchain training_data/.questions training_data/.answers
+          
+          # Create teacher config if it doesn't exist
+          mkdir -p config
+          if [ ! -f config/teacher.toml ]; then
+            cat > config/teacher.toml << 'TOML'
+          # Teacher configuration for Marisselle LM
+          [teacher]
+          enabled = true
+          provider = "groq"
+          method = "http"
+          endpoint = "${{ env.TEACHER_ENDPOINT }}"
+          status_endpoint = "${{ env.TEACHER_STATUS }}"
+          timeout_seconds = 60
+          max_retries = 3
+          retry_delay_ms = 1000
+          
+          [teacher.headers]
+          Content-Type = "application/json"
+          TOML
+            echo "Created teacher config file"
+          fi
+          
+          # Run the learning process (background)
+          cargo run --release --bin self_evolving_lm &
+          LEARNING_PID=$!
+          
+          # Wait for learning to initialize (15 seconds)
+          sleep 15
+          
+          # Check if process is still running
+          if kill -0 $LEARNING_PID 2>/dev/null; then
+            echo "Learning process running (PID: $LEARNING_PID)"
+            
+            # Run for 30 seconds to allow learning
+            sleep 30
+            
+            # Gracefully stop
+            kill $LEARNING_PID 2>/dev/null || true
+            wait $LEARNING_PID 2>/dev/null || true
+            echo "Learning process stopped gracefully"
+          else
+            echo "Learning process exited. Check logs for errors."
+          fi
+      
+      - name: Commit learned data and Teacher interactions
+        run: |
+          git config user.name "Marisselle LM"
+          git config user.email "marisselle@yaiwon.github.io"
+          
+          # Add all learned data
+          git add data/ vectors/ blockchain.json 2>/dev/null || true
+          git add training_data/.questions/ training_data/.answers/ 2>/dev/null || true
+          git add config/teacher.toml 2>/dev/null || true
+          
+          # Commit if there are changes
+          git diff --staged --quiet || git commit -m "Auto-learn: $(date -u +'%Y-%m-%d %H:%M:%S') - Teacher: ${{ steps.teacher-check.outputs.teacher_available }}"
+          git push || echo "No changes to push or push failed"
+      
+      - name: Log Teacher interaction summary
+        if: always()
+        run: |
+          echo "========================================="
+          echo "LEARNING SESSION COMPLETE"
+          echo "========================================="
+          echo "Teacher available: ${{ steps.teacher-check.outputs.teacher_available }}"
+          echo "Teacher endpoint: ${{ env.TEACHER_ENDPOINT }}"
+          echo "========================================="
+
+  # ========================================================================
+  # JOB 3: TEACHER HEALTH MONITOR (Optional)
+  # ========================================================================
+  
+  monitor-teacher:
+    runs-on: ubuntu-latest
+    needs: [continuous-learning]
+    if: github.event_name == 'schedule'
+    
+    steps:
+      - name: Check Teacher health
+        run: |
+          echo "Performing Teacher health check..."
+          
+          # Check status endpoint
+          STATUS_RESPONSE=$(curl -s "${{ env.TEACHER_STATUS }}" || echo "{}")
+          ONLINE=$(echo "$STATUS_RESPONSE" | jq -r '.online // false')
+          MODEL=$(echo "$STATUS_RESPONSE" | jq -r '.model // "unknown"')
+          
+          echo "Teacher online: $ONLINE"
+          echo "Teacher model: $MODEL"
+          
+          # Log to GitHub Actions
+          if [ "$ONLINE" = "true" ]; then
+            echo "✅ Teacher health check PASSED"
+          else
+            echo "⚠️ Teacher health check FAILED"
+          fi
