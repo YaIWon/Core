@@ -6,6 +6,7 @@
 #          Includes: blockchain, mining (RandomX/Stratum), web server (Axum),
 #          encryption (AES-GCM), wallet generation, full system access.
 #          HTTP client (reqwest) for Teacher communication.
+#          teacher-http enabled by default.
 #          Zero limitations. Production ready.
 # ======================================================================
 
