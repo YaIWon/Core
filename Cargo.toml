@@ -5,6 +5,7 @@
 #          MERGED: All original dependencies + new mining/web/security crates
 #          Includes: blockchain, mining (RandomX/Stratum), web server (Axum),
 #          encryption (AES-GCM), wallet generation, full system access.
+#          HTTP client (reqwest) for Teacher communication.
 #          Zero limitations. Production ready.
 # ======================================================================
 
@@ -250,7 +251,7 @@ hyper-rustls = "0.27"
 tokio-tungstenite = { version = "0.21", features = ["native-tls", "rustls-tls"] }
 tungstenite = "0.21"
 
-# HTTP client (Original + upgraded)
+# HTTP client for Teacher communication (UPDATED with full features)
 reqwest = { version = "0.12", features = [
     "json",
     "stream",
@@ -261,6 +262,7 @@ reqwest = { version = "0.12", features = [
     "native-tls",
     "rustls-tls",
     "cookies",
+    "blocking",
 ] }
 
 # URL handling
@@ -357,13 +359,14 @@ jq = "0.2"
 # ======================================================================
 
 [features]
-default = ["full", "web", "stratum"]
+default = ["full", "web", "stratum", "teacher-http"]
 full = ["mining", "gpu", "hardware"]
 mining = ["randomx", "monero", "monero-rpc"]
 gpu = []
 hardware = ["bluer"]
 web = []
 stratum = []
+teacher-http = ["reqwest"]
 test = []
 
 # ======================================================================
