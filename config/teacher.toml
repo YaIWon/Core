@@ -1,0 +1,22 @@
+# config/teacher.toml - LM's connection to Teacher
+[teacher]
+enabled = true
+provider = "groq"
+endpoint = "https://yaiwon.github.io/marisselle-teacher/api/teacher/ask"
+status_endpoint = "https://yaiwon.github.io/marisselle-teacher/api/teacher/status"
+timeout_seconds = 60
+max_retries = 3
+retry_delay_ms = 1000
+
+# Communication method
+method = "http"  # Options: "http", "file", "shared_memory"
+http_method = "POST"
+
+# For HTTP communication
+headers = { "Content-Type" = "application/json" }
+
+# Optional: API key if needed (Groq key is handled by Teacher)
+api_key = ""
+
+# Health check
+health_check_interval_seconds = 30
