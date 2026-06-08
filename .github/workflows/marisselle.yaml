@@ -1,6 +1,7 @@
 # ============================================================================
 # FILE: .github/workflows/marisselle.yml
 # COMBINED WORKFLOW: Dashboard + Continuous Learning + Teacher Integration
+# WITH PAGES ENABLEMENT
 # ============================================================================
 
 name: Marisselle - Dashboard & Learning
@@ -15,7 +16,6 @@ on:
       - 'Cargo.toml'
       - 'Cargo.lock'
   schedule:
-    # Run learning every 6 hours
     - cron: '0 */6 * * *'
   workflow_dispatch:
     inputs:
@@ -33,10 +33,7 @@ permissions:
   contents: read
   pages: write
   id-token: write
-
-concurrency:
-  group: pages
-  cancel-in-progress: false
+  actions: read
 
 # ============================================================================
 # ENVIRONMENT VARIABLES
@@ -46,6 +43,11 @@ env:
   TEACHER_ENDPOINT: "https://yaiwon.github.io/marisselle-teacher/api/teacher/ask"
   TEACHER_STATUS: "https://yaiwon.github.io/marisselle-teacher/api/teacher/status"
   CARGO_TERM_COLOR: always
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
 
 # ============================================================================
 # JOBS
@@ -53,25 +55,48 @@ env:
 
 jobs:
   # ========================================================================
+  # JOB 0: ENABLE PAGES (if not already enabled)
+  # ========================================================================
+  
+  enable-pages:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+      actions: write
+    
+    steps:
+      - name: Enable GitHub Pages
+        uses: actions/configure-pages@v5
+        with:
+          enablement: true
+          generator_config_file: .github/workflows/marisselle.yml
+
+  # ========================================================================
   # JOB 1: DASHBOARD DEPLOYMENT
   # ========================================================================
   
   deploy-dashboard:
     runs-on: ubuntu-latest
+    needs: [enable-pages]
     if: github.event_name != 'workflow_dispatch' || github.event.inputs.skip_dashboard != 'true'
+    
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
     
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
       
       - name: Setup Pages
-        uses: actions/configure-pages@v4
+        uses: actions/configure-pages@v5
       
       - name: Build dashboard with Teacher status
         run: |
           mkdir -p dashboard
           
-          # Build index.html with Teacher status integration
           cat > dashboard/index.html << 'EOF'
           <!DOCTYPE html>
           <html>
@@ -83,42 +108,35 @@ jobs:
                   body { font-family: system-ui, sans-serif; margin: 0; padding: 20px; background: #0a0a0a; color: #e0e0e0; }
                   .container { max-width: 1200px; margin: 0 auto; }
                   h1 { color: #00ff88; }
-                  h1 .teacher-status { font-size: 0.6em; margin-left: 10px; }
                   .card { background: #1a1a1a; border-radius: 8px; padding: 20px; margin: 20px 0; border: 1px solid #333; }
                   .stat { font-size: 2em; font-weight: bold; color: #00ff88; }
-                  .teacher-stat { font-size: 1.5em; font-weight: bold; }
                   table { width: 100%; border-collapse: collapse; }
                   th, td { text-align: left; padding: 8px; border-bottom: 1px solid #333; }
                   th { color: #888; }
                   .status { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 8px; }
-                  .status.online { background: #00ff88; box-shadow: 0 0 5px #00ff88; animation: pulse 2s infinite; }
+                  .status.online { background: #00ff88; box-shadow: 0 0 5px #00ff88; }
                   .status.offline { background: #ff4444; }
-                  .status.checking { background: #ffaa00; animation: pulse 1s infinite; }
-                  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
-                  .teacher-info { background: #00ff8822; border-left: 3px solid #00ff88; padding: 10px; margin-top: 10px; border-radius: 4px; }
-                  .teacher-info h3 { margin: 0 0 5px 0; color: #00ff88; }
-                  .teacher-info p { margin: 5px 0; font-size: 0.9em; }
-                  .refresh-btn { background: #00ff88; color: #0a0a0a; border: none; padding: 5px 10px; border-radius: 4px; cursor: pointer; margin-top: 10px; }
-                  .refresh-btn:hover { background: #00cc66; }
+                  .teacher-status { margin-left: 10px; font-size: 0.6em; }
+                  .teacher-online { color: #00ff88; }
+                  .teacher-offline { color: #ff4444; }
               </style>
           </head>
           <body>
               <div class="container">
                   <h1>🧠 Self-Evolving LM Dashboard
-                      <span id="teacher-status-badge" class="teacher-status">[Checking Teacher...]</span>
+                      <span id="teacher-badge" class="teacher-status">[Checking Teacher...]</span>
                   </h1>
                   
-                  <div class="card" id="teacher-card">
+                  <div class="card">
                       <h2>👨‍🏫 Teacher Status</h2>
-                      <div id="teacher-status-content">
+                      <div id="teacher-status">
                           <p>Checking Teacher availability...</p>
                       </div>
-                      <button class="refresh-btn" onclick="checkTeacher()">🔄 Refresh Teacher Status</button>
                   </div>
                   
                   <div class="card">
                       <h2>System Status</h2>
-                      <p><span class="status online" id="system-status"></span> <span id="system-status-text">Online</span></p>
+                      <p><span class="status online"></span> Online</p>
                       <p>Last updated: <span id="timestamp"></span></p>
                   </div>
                   
@@ -127,13 +145,13 @@ jobs:
                       <p>Vector Store Entries: <span class="stat" id="vector_count">---</span></p>
                       <p>Blockchain Height: <span class="stat" id="block_height">---</span></p>
                       <p>Files Processed: <span class="stat" id="files_processed">---</span></p>
-                      <p>Tokens Generated: <span class="stat" id="tokens_generated">---</span></p>
+                      <p>Teacher Tokens: <span class="stat" id="teacher_tokens">---</span></p>
                   </div>
                   
                   <div class="card">
                       <h2>Recent Learning</h2>
                       <table id="learning-table">
-                          <thead><tr><th>Time</th><th>Content</th></thead>
+                          <thead><tr><th>Time</th><th>Content</th></tr></thead>
                           <tbody></tbody>
                       </table>
                   </div>
@@ -143,56 +161,34 @@ jobs:
                   const TEACHER_API = '${{ env.TEACHER_STATUS }}';
                   
                   async function checkTeacher() {
-                      const statusDiv = document.getElementById('teacher-status-content');
-                      const badge = document.getElementById('teacher-status-badge');
-                      badge.innerHTML = '[Checking...]';
-                      statusDiv.innerHTML = '<p>Checking Teacher availability...</p>';
-                      
+                      const statusDiv = document.getElementById('teacher-status');
+                      const badge = document.getElementById('teacher-badge');
                       try {
                           const response = await fetch(TEACHER_API);
                           if (response.ok) {
                               const data = await response.json();
-                              const isOnline = data.online === true || data.status === 'online';
-                              const model = data.model || 'Groq Mixtral 8x7B';
-                              const uptime = data.uptime_seconds || 0;
-                              const uptimeStr = formatUptime(uptime);
-                              
-                              if (isOnline) {
+                              if (data.online) {
                                   badge.innerHTML = '[Teacher: ONLINE]';
-                                  badge.style.color = '#00ff88';
-                                  statusDiv.innerHTML = `
-                                      <div class="teacher-info">
-                                          <h3>✅ Teacher is ONLINE</h3>
-                                          <p><strong>Model:</strong> ${model}</p>
-                                          <p><strong>Uptime:</strong> ${uptimeStr}</p>
-                                          <p><strong>Provider:</strong> Groq API</p>
-                                          <p><strong>Tokens Generated:</strong> ${data.metrics?.totalTokens || 0}</p>
-                                          <p><strong>Lessons Taught:</strong> ${data.metrics?.lessonsTaught || 0}</p>
-                                      </div>
-                                  `;
-                                  document.getElementById('tokens_generated').innerText = data.metrics?.totalTokens || 0;
+                                  badge.className = 'teacher-status teacher-online';
+                                  statusDiv.innerHTML = '<p>✅ Teacher is online and ready</p><p>Model: ' + (data.model || 'Groq Mixtral') + '</p>';
+                                  if (data.metrics && data.metrics.totalTokens) {
+                                      document.getElementById('teacher_tokens').innerText = data.metrics.totalTokens;
+                                  }
                               } else {
                                   badge.innerHTML = '[Teacher: OFFLINE]';
-                                  badge.style.color = '#ff4444';
-                                  statusDiv.innerHTML = '<p>❌ Teacher is offline or not responding</p>';
+                                  badge.className = 'teacher-status teacher-offline';
+                                  statusDiv.innerHTML = '<p>⚠️ Teacher is offline</p>';
                               }
                           } else {
                               badge.innerHTML = '[Teacher: ERROR]';
-                              badge.style.color = '#ff4444';
-                              statusDiv.innerHTML = '<p>⚠️ Could not connect to Teacher API</p>';
+                              badge.className = 'teacher-status teacher-offline';
+                              statusDiv.innerHTML = '<p>⚠️ Teacher API error: ' + response.status + '</p>';
                           }
-                      } catch (e) {
+                      } catch(e) {
                           badge.innerHTML = '[Teacher: UNREACHABLE]';
-                          badge.style.color = '#ffaa00';
-                          statusDiv.innerHTML = `<p>⚠️ Teacher API unreachable: ${e.message}</p>`;
+                          badge.className = 'teacher-status teacher-offline';
+                          statusDiv.innerHTML = '<p>⚠️ Teacher unreachable: ' + e.message + '</p>';
                       }
-                  }
-                  
-                  function formatUptime(seconds) {
-                      const hours = Math.floor(seconds / 3600);
-                      const minutes = Math.floor((seconds % 3600) / 60);
-                      const secs = seconds % 60;
-                      return `${hours}h ${minutes}m ${secs}s`;
                   }
                   
                   async function fetchData() {
@@ -215,10 +211,7 @@ jobs:
                       } catch(e) { console.error(e); }
                   }
                   
-                  // Check Teacher on load
                   checkTeacher();
-                  
-                  // Regular updates
                   fetchData();
                   setInterval(fetchData, 30000);
                   setInterval(checkTeacher, 60000);
@@ -227,20 +220,10 @@ jobs:
           </html>
           EOF
           
-          # Create data.json
-          cat > dashboard/data.json << 'EOF'
-          {
-            "vector_count": 0,
-            "block_height": 0,
-            "files_processed": 0,
-            "recent_learning": [],
-            "last_updated": "Initializing"
-          }
-          EOF
-          
+          echo '{"vector_count":0,"block_height":0,"files_processed":0,"recent_learning":[]}' > dashboard/data.json
           echo "Dashboard built successfully"
       
-      - name: Upload artifact
+      - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
           path: 'dashboard'
@@ -250,13 +233,12 @@ jobs:
         uses: actions/deploy-pages@v4
 
   # ========================================================================
-  # JOB 2: CONTINUOUS LEARNING (with Teacher integration)
+  # JOB 2: CONTINUOUS LEARNING
   # ========================================================================
   
   continuous-learning:
     runs-on: ubuntu-latest
-    needs: [deploy-dashboard]
-    if: always()
+    needs: [enable-pages]
     
     steps:
       - name: Checkout repository
@@ -267,7 +249,6 @@ jobs:
       - name: Check Teacher availability
         id: teacher-check
         run: |
-          echo "Checking Teacher at: ${{ env.TEACHER_STATUS }}"
           TEACHER_RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" "${{ env.TEACHER_STATUS }}" || echo "000")
           if [ "$TEACHER_RESPONSE" = "200" ]; then
             echo "✅ Teacher is AVAILABLE"
@@ -282,7 +263,6 @@ jobs:
         with:
           toolchain: stable
           override: true
-          components: rustfmt, clippy
       
       - name: Cache cargo registry
         uses: actions/cache@v3
@@ -292,23 +272,16 @@ jobs:
             ~/.cargo/git
             target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-
       
-      - name: Build with Teacher HTTP support
-        run: |
-          cargo build --release --features "teacher-http"
-          echo "Build complete with teacher-http feature enabled"
+      - name: Build
+        run: cargo build --release --features "teacher-http"
       
-      - name: Run learning process with Teacher integration
+      - name: Run learning process
         run: |
-          mkdir -p data/vectors data/blockchain training_data/.questions training_data/.answers
+          mkdir -p data/vectors data/blockchain training_data/.questions training_data/.answers config
           
-          # Create teacher config if it doesn't exist
-          mkdir -p config
-          if [ ! -f config/teacher.toml ]; then
-            cat > config/teacher.toml << 'TOML'
-          # Teacher configuration for Marisselle LM
+          # Create teacher config
+          cat > config/teacher.toml << 'TOML'
           [teacher]
           enabled = true
           provider = "groq"
@@ -317,85 +290,18 @@ jobs:
           status_endpoint = "${{ env.TEACHER_STATUS }}"
           timeout_seconds = 60
           max_retries = 3
-          retry_delay_ms = 1000
-          
-          [teacher.headers]
-          Content-Type = "application/json"
           TOML
-            echo "Created teacher config file"
-          fi
           
-          # Run the learning process (background)
           cargo run --release --bin self_evolving_lm &
           LEARNING_PID=$!
-          
-          # Wait for learning to initialize (15 seconds)
           sleep 15
-          
-          # Check if process is still running
-          if kill -0 $LEARNING_PID 2>/dev/null; then
-            echo "Learning process running (PID: $LEARNING_PID)"
-            
-            # Run for 30 seconds to allow learning
-            sleep 30
-            
-            # Gracefully stop
-            kill $LEARNING_PID 2>/dev/null || true
-            wait $LEARNING_PID 2>/dev/null || true
-            echo "Learning process stopped gracefully"
-          else
-            echo "Learning process exited. Check logs for errors."
-          fi
+          kill $LEARNING_PID 2>/dev/null || true
+          wait $LEARNING_PID 2>/dev/null || true
       
-      - name: Commit learned data and Teacher interactions
+      - name: Commit learned data
         run: |
           git config user.name "Marisselle LM"
           git config user.email "marisselle@yaiwon.github.io"
-          
-          # Add all learned data
-          git add data/ vectors/ blockchain.json 2>/dev/null || true
-          git add training_data/.questions/ training_data/.answers/ 2>/dev/null || true
-          git add config/teacher.toml 2>/dev/null || true
-          
-          # Commit if there are changes
-          git diff --staged --quiet || git commit -m "Auto-learn: $(date -u +'%Y-%m-%d %H:%M:%S') - Teacher: ${{ steps.teacher-check.outputs.teacher_available }}"
-          git push || echo "No changes to push or push failed"
-      
-      - name: Log Teacher interaction summary
-        if: always()
-        run: |
-          echo "========================================="
-          echo "LEARNING SESSION COMPLETE"
-          echo "========================================="
-          echo "Teacher available: ${{ steps.teacher-check.outputs.teacher_available }}"
-          echo "Teacher endpoint: ${{ env.TEACHER_ENDPOINT }}"
-          echo "========================================="
-
-  # ========================================================================
-  # JOB 3: TEACHER HEALTH MONITOR (Optional)
-  # ========================================================================
-  
-  monitor-teacher:
-    runs-on: ubuntu-latest
-    needs: [continuous-learning]
-    if: github.event_name == 'schedule'
-    
-    steps:
-      - name: Check Teacher health
-        run: |
-          echo "Performing Teacher health check..."
-          
-          # Check status endpoint
-          STATUS_RESPONSE=$(curl -s "${{ env.TEACHER_STATUS }}" || echo "{}")
-          ONLINE=$(echo "$STATUS_RESPONSE" | jq -r '.online // false')
-          MODEL=$(echo "$STATUS_RESPONSE" | jq -r '.model // "unknown"')
-          
-          echo "Teacher online: $ONLINE"
-          echo "Teacher model: $MODEL"
-          
-          # Log to GitHub Actions
-          if [ "$ONLINE" = "true" ]; then
-            echo "✅ Teacher health check PASSED"
-          else
-            echo "⚠️ Teacher health check FAILED"
-          fi
+          git add data/ vectors/ blockchain.json config/teacher.toml 2>/dev/null || true
+          git diff --staged --quiet || git commit -m "Auto-learn: $(date -u +'%Y-%m-%d %H:%M:%S')"
+          git push || true
