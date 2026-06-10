@@ -1,6 +1,7 @@
 # ============================================================================
 # FILE: .github/workflows/marisselle.yml
 # REMOVED enable-pages job - Pages must be enabled manually once
+# FIXED: Corrected permissions, added teacher health check, proper error handling
 # ============================================================================
 
 name: Marisselle - Dashboard & Learning
@@ -29,7 +30,7 @@ on:
 # ============================================================================
 
 permissions:
-  contents: read
+  contents: write  # Changed from read to write for git push
   pages: write
   id-token: write
 
@@ -38,6 +39,7 @@ env:
   TEACHER_STATUS: "https://yaiwon.github.io/marisselle-teacher/api/teacher/status"
   CARGO_TERM_COLOR: always
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  RUST_BACKTRACE: "1"
 
 concurrency:
   group: "pages"
@@ -49,11 +51,43 @@ concurrency:
 
 jobs:
   # ========================================================================
+  # JOB 0: TEACHER HEALTH CHECK (NEW)
+  # ========================================================================
+  
+  teacher-health-check:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    
+    steps:
+      - name: Check Teacher Status
+        run: |
+          echo "Checking Teacher availability at ${{ env.TEACHER_STATUS }}"
+          RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" ${{ env.TEACHER_STATUS }})
+          if [ "$RESPONSE" = "200" ]; then
+            echo "✅ Teacher is ONLINE"
+          else
+            echo "⚠️ Teacher returned HTTP $RESPONSE - Will continue but lessons may fail"
+          fi
+          
+          # Also test the ask endpoint
+          ASK_RESPONSE=$(curl -s -X POST ${{ env.TEACHER_ENDPOINT }} \
+            -H "Content-Type: application/json" \
+            -d '{"prompt":"Ping","max_tokens":5}' \
+            -o /dev/null -w "%{http_code}")
+          
+          if [ "$ASK_RESPONSE" = "200" ] || [ "$ASK_RESPONSE" = "405" ]; then
+            echo "✅ Teacher ask endpoint responded (HTTP $ASK_RESPONSE)"
+          else
+            echo "⚠️ Teacher ask endpoint returned HTTP $ASK_RESPONSE"
+          fi
+
+  # ========================================================================
   # JOB 1: DASHBOARD DEPLOYMENT
   # ========================================================================
   
   deploy-dashboard:
     runs-on: ubuntu-latest
+    needs: [teacher-health-check]
     
     environment:
       name: github-pages
@@ -86,6 +120,8 @@ jobs:
                   .teacher-status { margin-left: 10px; font-size: 0.6em; }
                   .teacher-online { color: #00ff88; }
                   .teacher-offline { color: #ff4444; }
+                  .status { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 8px; }
+                  .status.online { background: #00ff88; box-shadow: 0 0 5px #00ff88; }
               </style>
           </head>
           <body>
@@ -97,16 +133,37 @@ jobs:
                       <h2>System Status</h2>
                       <p><span class="status online"></span> Online</p>
                       <p>Last updated: <span id="timestamp"></span></p>
+                      <p>Teacher Endpoint: <code id="teacher-endpoint">${{ env.TEACHER_ENDPOINT }}</code></p>
                   </div>
                   <div class="card">
                       <h2>Statistics</h2>
                       <p>Vector Store Entries: <span class="stat" id="vector_count">---</span></p>
                       <p>Blockchain Height: <span class="stat" id="block_height">---</span></p>
                       <p>Files Processed: <span class="stat" id="files_processed">---</span></p>
+                      <p>Lessons Learned: <span class="stat" id="lessons_learned">---</span></p>
+                  </div>
+                  <div class="card">
+                      <h2>Recent Activity</h2>
+                      <div id="activity-log" style="font-family: monospace; font-size: 0.8em; max-height: 200px; overflow-y: auto;">
+                          Loading...
+                      </div>
                   </div>
               </div>
               <script>
                   const TEACHER_API = '${{ env.TEACHER_STATUS }}';
+                  const TEACHER_ASK = '${{ env.TEACHER_ENDPOINT }}';
+                  let activityLog = [];
+                  
+                  function addActivity(message, type = 'info') {
+                      const timestamp = new Date().toLocaleTimeString();
+                      activityLog.unshift(`[${timestamp}] ${message}`);
+                      if (activityLog.length > 20) activityLog.pop();
+                      const logDiv = document.getElementById('activity-log');
+                      if (logDiv) {
+                          logDiv.innerHTML = activityLog.map(m => `<div style="color: ${type === 'error' ? '#ff4444' : '#00ff88'}">${m}</div>`).join('');
+                      }
+                  }
+                  
                   async function checkTeacher() {
                       const badge = document.getElementById('teacher-badge');
                       try {
@@ -116,19 +173,24 @@ jobs:
                               if (data.online) {
                                   badge.innerHTML = '[Teacher: ONLINE]';
                                   badge.className = 'teacher-status teacher-online';
+                                  addActivity('Teacher is ONLINE - Model: ' + (data.model || 'unknown'));
                               } else {
                                   badge.innerHTML = '[Teacher: OFFLINE]';
                                   badge.className = 'teacher-status teacher-offline';
+                                  addActivity('Teacher reported OFFLINE', 'error');
                               }
                           } else {
                               badge.innerHTML = '[Teacher: ERROR]';
                               badge.className = 'teacher-status teacher-offline';
+                              addActivity(`Teacher returned HTTP ${response.status}`, 'error');
                           }
                       } catch(e) {
                           badge.innerHTML = '[Teacher: UNREACHABLE]';
                           badge.className = 'teacher-status teacher-offline';
+                          addActivity(`Teacher unreachable: ${e.message}`, 'error');
                       }
                   }
+                  
                   async function fetchData() {
                       try {
                           const response = await fetch("data.json");
@@ -137,8 +199,24 @@ jobs:
                           document.getElementById("vector_count").innerText = data.vector_count || 0;
                           document.getElementById("block_height").innerText = data.block_height || 0;
                           document.getElementById("files_processed").innerText = data.files_processed || 0;
-                      } catch(e) { console.error(e); }
+                          document.getElementById("lessons_learned").innerText = data.lessons_learned || 0;
+                          
+                          if (data.recent_learning && data.recent_learning.length > 0) {
+                              addActivity(`New learning: ${data.recent_learning[0].content.substring(0, 50)}...`);
+                          }
+                      } catch(e) { 
+                          console.error(e); 
+                          addActivity(`Failed to fetch data: ${e.message}`, 'error');
+                      }
                   }
+                  
+                  // Display endpoint on page load
+                  document.addEventListener('DOMContentLoaded', () => {
+                      const endpointSpan = document.getElementById('teacher-endpoint');
+                      if (endpointSpan) endpointSpan.textContent = TEACHER_ASK;
+                      addActivity('Dashboard loaded - Monitoring Teacher connection');
+                  });
+                  
                   checkTeacher();
                   fetchData();
                   setInterval(fetchData, 30000);
@@ -148,7 +226,7 @@ jobs:
           </html>
           EOF
           
-          echo '{"vector_count":0,"block_height":0,"files_processed":0,"recent_learning":[]}' > dashboard/data.json
+          echo '{"vector_count":0,"block_height":0,"files_processed":0,"lessons_learned":0,"recent_learning":[]}' > dashboard/data.json
       
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
@@ -165,6 +243,7 @@ jobs:
   
   continuous-learning:
     runs-on: ubuntu-latest
+    needs: [deploy-dashboard]
     
     steps:
       - name: Checkout repository
@@ -177,6 +256,7 @@ jobs:
         with:
           toolchain: stable
           override: true
+          components: clippy
       
       - name: Cache cargo registry
         uses: actions/cache@v3
@@ -186,14 +266,24 @@ jobs:
             ~/.cargo/git
             target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
       
-      - name: Build
-        run: cargo build --release --features "teacher-http"
-      
-      - name: Run learning process
+      - name: Build LM
         run: |
-          mkdir -p data/vectors data/blockchain config
+          cargo build --release --features "teacher-http" 2>&1 | tee build.log
+          if [ ${PIPESTATUS[0]} -ne 0 ]; then
+            echo "❌ Build failed. See build.log above"
+            exit 1
+          fi
+          echo "✅ Build successful"
+      
+      - name: Create configuration
+        run: |
+          mkdir -p data/vectors data/blockchain config training_data
+          
           cat > config/teacher.toml << 'TOML'
+          # Teacher configuration for Marisselle LM
           [teacher]
           enabled = true
           provider = "groq"
@@ -202,16 +292,138 @@ jobs:
           status_endpoint = "${{ env.TEACHER_STATUS }}"
           timeout_seconds = 60
           max_retries = 3
+          retry_delay_ms = 1000
+          
+          [teacher.curriculum]
+          enabled = true
+          auto_start = true
+          interval_minutes = 5
           TOML
+          
+          # Create a test file to trigger learning
+          echo "Marisselle LM initialized at $(date -u)" > training_data/init.log
+      
+      - name: Test Teacher connection
+        run: |
+          echo "Testing Teacher endpoint connectivity..."
+          curl -s -X POST ${{ env.TEACHER_ENDPOINT }} \
+            -H "Content-Type: application/json" \
+            -d '{"prompt":"Test connection from Marisselle LM","max_tokens":10}' \
+            -w "\nHTTP Status: %{http_code}\n" \
+            --max-time 30 || echo "Teacher test failed - continuing anyway"
+      
+      - name: Run learning process
+        run: |
+          echo "Starting Marisselle LM learning process..."
+          echo "Teacher endpoint: ${{ env.TEACHER_ENDPOINT }}"
+          echo "Teacher status: ${{ env.TEACHER_STATUS }}"
+          
+          # Run the LM in background
           cargo run --release --bin self_evolving_lm &
           LEARNING_PID=$!
-          sleep 15
-          kill $LEARNING_PID 2>/dev/null || true
+          echo "LM process started with PID: $LEARNING_PID"
+          
+          # Wait for learning to happen
+          sleep 30
+          
+          # Check if process is still running
+          if kill -0 $LEARNING_PID 2>/dev/null; then
+            echo "LM is still running, continuing learning..."
+            sleep 30
+            echo "Stopping LM process..."
+            kill $LEARNING_PID 2>/dev/null || true
+            sleep 2
+            # Force kill if needed
+            if kill -0 $LEARNING_PID 2>/dev/null; then
+              kill -9 $LEARNING_PID 2>/dev/null || true
+            fi
+          else
+            echo "LM process exited on its own"
+          fi
+          
+          echo "Learning cycle complete"
+      
+      - name: Update dashboard data
+        run: |
+          # Update data.json with current stats
+          VECTOR_COUNT=$(ls -1 data/vectors/ 2>/dev/null | wc -l)
+          BLOCK_HEIGHT=$(cat data/blockchain/chain.json 2>/dev/null | jq '. | length' || echo "0")
+          FILES_PROCESSED=$(find training_data -type f 2>/dev/null | wc -l)
+          LESSONS_LEARNED=$(grep -l "lesson" training_data/* 2>/dev/null | wc -l || echo "0")
+          
+          # Get recent learning from blockchain
+          RECENT_LEARNING=$(cat data/blockchain/chain.json 2>/dev/null | jq '[.[-5:] | .[] | {time: .timestamp, content: .content_preview}]' || echo '[]')
+          
+          cat > dashboard/data.json << EOF
+          {
+            "vector_count": $VECTOR_COUNT,
+            "block_height": $BLOCK_HEIGHT,
+            "files_processed": $FILES_PROCESSED,
+            "lessons_learned": $LESSONS_LEARNED,
+            "recent_learning": $RECENT_LEARNING,
+            "last_updated": "$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          }
+          EOF
+          
+          echo "Dashboard data updated:"
+          cat dashboard/data.json
       
       - name: Commit learned data
         run: |
           git config user.name "Marisselle LM"
           git config user.email "marisselle@yaiwon.github.io"
-          git add data/ vectors/ blockchain.json config/teacher.toml 2>/dev/null || true
-          git diff --staged --quiet || git commit -m "Auto-learn: $(date -u +'%Y-%m-%d %H:%M:%S')"
-          git push || true
+          
+          # Add all data files
+          git add data/ vectors/ blockchain.json config/teacher.toml training_data/ dashboard/data.json 2>/dev/null || true
+          
+          # Check if there are changes to commit
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "Auto-learn: $(date -u +'%Y-%m-%d %H:%M:%S')"
+            echo "Pushing changes to repository..."
+            git push origin main || echo "Push failed - will retry on next run"
+          fi
+      
+      - name: Upload learning artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: learning-data-${{ github.run_id }}
+          path: |
+            data/
+            training_data/*.md
+            dashboard/data.json
+          retention-days: 7
+
+  # ========================================================================
+  # JOB 3: HEALTH REPORT (NEW)
+  # ========================================================================
+  
+  health-report:
+    runs-on: ubuntu-latest
+    needs: [continuous-learning]
+    if: always()
+    
+    steps:
+      - name: Check Teacher Status
+        run: |
+          echo "========================================"
+          echo "FINAL HEALTH REPORT"
+          echo "========================================"
+          echo "Timestamp: $(date -u)"
+          echo ""
+          
+          echo "Teacher Status Check:"
+          TEACHER_RESPONSE=$(curl -s -w "\nHTTP: %{http_code}" ${{ env.TEACHER_STATUS }} || echo "Failed")
+          echo "$TEACHER_RESPONSE"
+          echo ""
+          
+          echo "LM Status:"
+          echo "Learning cycle completed at $(date -u)"
+          
+          echo ""
+          echo "Next scheduled run:"
+          echo "Dashboard: On push to main"
+          echo "Learning: Every 6 hours (cron schedule)"
+          echo "Manual: workflow_dispatch"
