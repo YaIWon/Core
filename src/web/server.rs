@@ -5,6 +5,7 @@
 //          Serves HTML/CSS/JS, handles file uploads, real-time streaming
 //          Deep think button, time dilation (simulated), mining stats display
 //          Swap pool integration at: 0xF88DF111343BffE7a2d89FB770d77A264d53f043
+//          NEW: /api/teacher/lesson endpoint for receiving lessons from Teacher
 // ======================================================================
 
 use anyhow::{Result, anyhow};
@@ -15,7 +16,7 @@ use tokio::sync::{RwLock, Mutex};
 use tokio::fs;
 use tokio::time::{sleep, Duration, Instant};
 use axum::{
-    Router, routing::{get, post}, extract::{Path, Query, State, WebSocketUpgrade, ws::{WebSocket, Message as WsMessage}},
+    Router, routing::{get, post, delete}, extract::{Path, Query, State, WebSocketUpgrade, ws::{WebSocket, Message as WsMessage}},
     response::{Html, Json, IntoResponse}, http::StatusCode, body::Body,
 };
 use axum::extract::Multipart;
@@ -116,6 +117,20 @@ pub struct SwapQuoteResponse {
     pub no_gas_fee: bool,
 }
 
+// ============================================================================
+// NEW: Teacher Lesson Structure (Receives lessons from Teacher)
+// ============================================================================
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct TeacherLesson {
+    pub lesson_id: String,
+    pub topic: String,
+    pub content: String,
+    pub lesson_number: Option<usize>,
+    pub total_lessons: Option<usize>,
+    pub proactive: Option<bool>,
+}
+
 // ======================================================================
 // WEB SERVER
 // ======================================================================
@@ -179,6 +194,7 @@ impl WebServer {
             .route("/api/chat", post(handle_chat))
             .route("/api/chat/stream", get(handle_chat_websocket))
             .route("/api/upload", post(handle_upload))
+            .route("/api/teacher/lesson", post(handle_teacher_lesson))  // NEW: Teacher lesson endpoint
             .route("/api/mining/stats", get(get_mining_stats))
             .route("/api/optimizer/stats", get(get_optimizer_stats))
             .route("/api/wallets", get(get_wallets))
@@ -200,6 +216,7 @@ impl WebServer {
         info!("✅ Web server listening on http://{}:{}", self.host, self.port);
         info!("   Chat interface: http://{}:{}/", self.host, self.port);
         info!("   Swap pool: {}", MARISSELLE_SWAP_POOL);
+        info!("   Teacher lesson endpoint: POST /api/teacher/lesson");
         
         axum::serve(listener, app).await?;
         
@@ -373,6 +390,108 @@ async fn handle_upload(
     }
     
     Err(StatusCode::BAD_REQUEST)
+}
+
+// ============================================================================
+// NEW: Handle lessons sent from Teacher
+// ============================================================================
+
+async fn handle_teacher_lesson(
+    State(state): State<AppState>,
+    Json(payload): Json<TeacherLesson>,
+) -> impl IntoResponse {
+    info!("[TEACHER] Received lesson: {} - {}", payload.lesson_id, payload.topic);
+    
+    state.logger.log_teacher_to_lm(
+        &format!("Received lesson: {}", payload.topic),
+        Some(json!({ 
+            "lesson_id": payload.lesson_id, 
+            "content_length": payload.content.len(),
+            "lesson_number": payload.lesson_number,
+            "proactive": payload.proactive
+        }))
+    ).await;
+    
+    // Create filename from lesson number and topic
+    let lesson_num = payload.lesson_number.unwrap_or(0);
+    let safe_topic = payload.topic
+        .replace(|c: char| !c.is_alphanumeric() && c != ' ', "_")
+        .replace(" ", "_");
+    
+    let filename = if lesson_num > 0 {
+        format!("training_data/lesson_{:03}_{}.md", lesson_num, safe_topic)
+    } else {
+        format!("training_data/lesson_{}_{}.md", payload.lesson_id, safe_topic)
+    };
+    
+    let path = std::path::PathBuf::from(&filename);
+    
+    // Create file content with metadata
+    let file_content = format!(
+        "# Lesson: {}\n\n\
+         **Lesson ID:** {}\n\
+         **Topic:** {}\n\
+         **Received:** {}\n\
+         **Lesson Number:** {}\n\
+         **Proactive:** {}\n\
+         **Total Lessons:** {}\n\n\
+         ---\n\n\
+         {}\n",
+        payload.topic,
+        payload.lesson_id,
+        payload.topic,
+        Utc::now().to_rfc3339(),
+        lesson_num,
+        payload.proactive.unwrap_or(false),
+        payload.total_lessons.unwrap_or(0),
+        payload.content
+    );
+    
+    // Ensure training_data directory exists
+    if let Some(parent) = path.parent() {
+        if let Err(e) = tokio::fs::create_dir_all(parent).await {
+            error!("[TEACHER] Failed to create training_data directory: {}", e);
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ 
+                    "error": "Failed to create directory", 
+                    "details": e.to_string() 
+                }))
+            );
+        }
+    }
+    
+    // Write the file
+    match tokio::fs::write(&path, file_content).await {
+        Ok(_) => {
+            info!("[TEACHER] Lesson saved to: {}", filename);
+            state.logger.log_knowledge_integrated(&filename, 1).await;
+            state.logger.log_lm_thought(
+                &format!("New lesson received from Teacher: {}", payload.topic),
+                None
+            ).await;
+            
+            (
+                StatusCode::OK,
+                Json(json!({
+                    "status": "received",
+                    "saved_to": filename,
+                    "lesson_id": payload.lesson_id,
+                    "topic": payload.topic
+                }))
+            )
+        }
+        Err(e) => {
+            error!("[TEACHER] Failed to save lesson: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ 
+                    "error": "Failed to save lesson", 
+                    "details": e.to_string() 
+                }))
+            )
+        }
+    }
 }
 
 async fn get_mining_stats(State(state): State<AppState>) -> Json<MiningStatsResponse> {
