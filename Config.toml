@@ -43,7 +43,7 @@ batch_size = 32
 [blockchain]
 difficulty = 4
 storage_path = "data/blockchain"
-bitcoin_anchoring_enabled = false
+bitcoin_anchoring_enabled = true
 bitcoin_rpc_url = ""
 bitcoin_rpc_user = ""
 bitcoin_rpc_password = ""
