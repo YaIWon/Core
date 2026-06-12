@@ -30,8 +30,8 @@ const MODEL_URLS = [
 
 // Advanced: API endpoints that should be cached
 const API_CACHE_ENDPOINTS = [
-    '/api/teacher/status',
-    '/api/teacher/ping'
+    '/API/teacher/status',
+    '/API/teacher/ping'
 ];
 
 // ============================================================================
@@ -91,7 +91,7 @@ self.addEventListener('fetch', (event) => {
     // ========================================================================
     // API ROUTES - Handle locally (don't fetch from network)
     // ========================================================================
-    if (url.pathname.startsWith('/api/teacher/')) {
+    if (url.pathname.startsWith('/API/teacher/')) {
         event.respondWith(handleLocalApiRequest(request, url));
         return;
     }
@@ -136,7 +136,7 @@ async function handleLocalApiRequest(request, url) {
     // ========================================================================
     // GET /api/teacher/status
     // ========================================================================
-    if (url.pathname === '/api/teacher/status' && request.method === 'GET') {
+    if (url.pathname === '/API/teacher/status' && request.method === 'GET') {
         return new Response(JSON.stringify({
             online: true,
             model: 'llama-3.3-70b-versatile',
@@ -166,7 +166,7 @@ async function handleLocalApiRequest(request, url) {
     // ========================================================================
     // GET /api/teacher/ping
     // ========================================================================
-    if (url.pathname === '/api/teacher/ping' && request.method === 'GET') {
+    if (url.pathname === '/API/teacher/ping' && request.method === 'GET') {
         return new Response(JSON.stringify({
             pong: true,
             timestamp: Date.now(),
@@ -185,7 +185,7 @@ async function handleLocalApiRequest(request, url) {
     // ========================================================================
     // POST /api/teacher/ask - Forward to Groq API
     // ========================================================================
-    if (url.pathname === '/api/teacher/ask' && request.method === 'POST') {
+    if (url.pathname === '/API/teacher/ask' && request.method === 'POST') {
         try {
             const requestBody = await request.clone().json();
             const prompt = requestBody.prompt || requestBody.message;
@@ -254,7 +254,7 @@ async function handleLocalApiRequest(request, url) {
     // ========================================================================
     // POST /api/teacher/register - LM registers Teacher
     // ========================================================================
-    if (url.pathname === '/api/teacher/register' && request.method === 'POST') {
+    if (url.pathname === '/API/teacher/register' && request.method === 'POST') {
         return new Response(JSON.stringify({
             status: 'registered',
             message: 'Teacher registered successfully',
@@ -272,7 +272,7 @@ async function handleLocalApiRequest(request, url) {
     // ========================================================================
     // POST /api/teacher/heartbeat - LM sends heartbeat
     // ========================================================================
-    if (url.pathname === '/api/teacher/heartbeat' && request.method === 'POST') {
+    if (url.pathname === '/API/teacher/heartbeat' && request.method === 'POST') {
         return new Response(JSON.stringify({
             status: 'received',
             timestamp: Date.now()
@@ -436,7 +436,7 @@ async function syncQueuedRequests() {
 async function handleKeepaliveSync() {
     console.log('[SYNC] Keepalive sync triggered');
     try {
-        await fetch('/api/teacher/ping');
+        await fetch('/API/teacher/ping');
     } catch (e) {
         console.error('[SYNC] Keepalive failed:', e);
     }
@@ -525,7 +525,7 @@ if ('periodicSync' in self.registration) {
 
 async function performHealthCheck() {
     try {
-        const response = await fetch('/api/teacher/status');
+        const response = await fetch('/API/teacher/status');
         const data = await response.json();
         console.log('[PERIODIC] Health check:', data);
     } catch (e) {
