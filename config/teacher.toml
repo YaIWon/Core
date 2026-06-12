@@ -2,8 +2,8 @@
 [teacher]
 enabled = true
 provider = "groq"
-endpoint = "https://yaiwon.github.io/marisselle-teacher/api/teacher/ask"
-status_endpoint = "https://yaiwon.github.io/marisselle-teacher/api/teacher/status"
+endpoint = "https://yaiwon.github.io/marisselle-teacher/API/teacher/ask"
+status_endpoint = "https://yaiwon.github.io/marisselle-teacher/API/teacher/status"
 timeout_seconds = 60
 max_retries = 3
 retry_delay_ms = 1000
