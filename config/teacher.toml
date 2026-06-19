@@ -1,22 +1,215 @@
-# config/teacher.toml - LM's connection to Teacher
+# ============================================================================
+# FILE: config/teacher.toml
+# PATH: /Core/config/teacher.toml
+# PURPOSE: Teacher client configuration for Marisselle LM
+# VERSION: 4.0.0 - Full production ready
+# ============================================================================
+
+# ============================================================================
+# TEACHER CONNECTION
+# ============================================================================
+
 [teacher]
+# Enable or disable teacher integration
 enabled = true
+
+# Provider type: "groq", "openai", "ollama", "local"
 provider = "groq"
-endpoint = "https://yaiwon.github.io/marisselle-teacher/API/teacher/ask"
-status_endpoint = "https://yaiwon.github.io/marisselle-teacher/API/teacher/status"
+
+# Communication method: "http", "file", "auto"
+method = "http"
+
+# HTTP endpoints (if using http method)
+endpoint = "https://yaiwon.github.io/marisselle-teacher/api/teacher/ask"
+status_endpoint = "https://yaiwon.github.io/marisselle-teacher/api/teacher/status"
+
+# Alternative: direct Groq API (bypass Teacher middleman)
+# direct_groq = true
+# groq_api_key = "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"
+# groq_model = "llama-3.3-70b-versatile"
+
+# ============================================================================
+# FILE-BASED COMMUNICATION (Fallback)
+# ============================================================================
+
+[teacher.file]
+# Directory where LM writes questions
+question_dir = "training_data/.outbox_marisselle/"
+
+# Directory where LM reads answers
+answer_dir = "training_data/.inbox_teacher/"
+
+# Polling interval in milliseconds
+poll_interval_ms = 5000
+
+# Timeout for waiting for answers (seconds)
 timeout_seconds = 60
-max_retries = 3
-retry_delay_ms = 1000
 
-# Communication method
-method = "http"  # Options: "http", "file", "shared_memory"
-http_method = "POST"
+# ============================================================================
+# RETRY AND TIMEOUT
+# ============================================================================
 
-# For HTTP communication
-headers = { "Content-Type" = "application/json" }
+[teacher.retry]
+# Maximum number of retries for failed requests
+max_retries = 5
 
-# Optional: API key if needed (Groq key is handled by Teacher)
-api_key = ""
+# Delay between retries in milliseconds
+retry_delay_ms = 2000
 
-# Health check
-health_check_interval_seconds = 30
+# Maximum backoff time in milliseconds
+max_backoff_ms = 30000
+
+# Exponential backoff multiplier
+backoff_multiplier = 2.0
+
+# Timeout for HTTP requests (seconds)
+timeout_seconds = 60
+
+# ============================================================================
+# CURRICULUM
+# ============================================================================
+
+[teacher.curriculum]
+# Enable automatic curriculum learning
+enabled = true
+
+# Auto-start learning on initialization
+auto_start = true
+
+# Time between proactive lessons (minutes)
+interval_minutes = 5
+
+# Maximum lessons per session
+max_lessons_per_session = 3
+
+# Path to curriculum file
+curriculum_file = "curriculum.json"
+
+# Path to progress tracker
+progress_file = ".teacher_progress.json"
+
+# ============================================================================
+# ELDER PRIORITY
+# ============================================================================
+
+[teacher.elder]
+# Enable elder priority system
+enabled = true
+
+# Elder input takes highest priority
+priority = "highest"
+
+# Queue messages while lesson is active
+queue_while_busy = true
+
+# Process queued messages after lesson completes
+process_after_lesson = true
+
+# Elder input field ID in UI
+input_field_id = "elder-input"
+
+# ============================================================================
+# LOGGING
+# ============================================================================
+
+[teacher.logging]
+# Log level: "trace", "debug", "info", "warn", "error"
+level = "info"
+
+# Log to console
+console = true
+
+# Log to file
+file = true
+
+# Log file path
+file_path = "logs/teacher.log"
+
+# Log format: "json", "pretty", "compact"
+format = "pretty"
+
+# Include timestamps
+timestamp = true
+
+# ============================================================================
+# BLOCKCHAIN SYNC
+# ============================================================================
+
+[teacher.blockchain]
+# Enable blockchain synchronization
+enabled = true
+
+# Sync interval in seconds
+interval_seconds = 60
+
+# Blockchain data path
+data_path = "data/blockchain/"
+
+# Sync all lessons to blockchain
+sync_lessons = true
+
+# Sync pedagogical state
+sync_pedagogical_state = true
+
+# ============================================================================
+# HEALTH CHECK
+# ============================================================================
+
+[teacher.health]
+# Enable health checks
+enabled = true
+
+# Health check interval in seconds
+interval_seconds = 60
+
+# Health check timeout in seconds
+timeout_seconds = 10
+
+# Health check endpoint (relative or absolute)
+endpoint = "/api/teacher/status"
+
+# ============================================================================
+# ADVANCED FEATURES
+# ============================================================================
+
+[teacher.advanced]
+# Enable deep think mode
+deep_think = false
+
+# Enable time dilation (simulated)
+time_dilation = false
+
+# Dilation factor
+dilation_factor = 1.0
+
+# Enable pedagogical state tracking
+pedagogical_tracking = true
+
+# Enable student models
+student_models = true
+
+# Enable adaptation
+adaptation = true
+
+# Enable confusion detection
+confusion_detection = true
+
+# Enable proactive learning
+proactive_learning = true
+
+# ============================================================================
+# SECURITY
+# ============================================================================
+
+[teacher.security]
+# Enable TLS/SSL verification
+verify_tls = true
+
+# API key (if not in secrets)
+# api_key = ""
+
+# Request signing (for security)
+sign_requests = false
+
+# Signature key (if signing enabled)
+# signature_key = ""
