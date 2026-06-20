@@ -20,8 +20,8 @@ provider = "groq"
 method = "http"
 
 # HTTP endpoints (if using http method)
-endpoint = "https://yaiwon.github.io/marisselle-teacher/api/teacher/ask"
-status_endpoint = "https://yaiwon.github.io/marisselle-teacher/api/teacher/status"
+endpoint = "https://yaiwon.github.io/marisselle-teacher/API/teacher/ask"
+status_endpoint = "https://yaiwon.github.io/marisselle-teacher/API/teacher/status"
 
 # Alternative: direct Groq API (bypass Teacher middleman)
 # direct_groq = true
@@ -166,7 +166,7 @@ interval_seconds = 60
 timeout_seconds = 10
 
 # Health check endpoint (relative or absolute)
-endpoint = "/api/teacher/status"
+endpoint = "/API/teacher/status"
 
 # ============================================================================
 # ADVANCED FEATURES
